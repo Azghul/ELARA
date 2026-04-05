@@ -5,12 +5,56 @@ namespace SimpleAudioRecorder;
 internal static class CoreAudioInterop
 {
     public const int COINIT_MULTITHREADED = 0x0;
+    public const int COINIT_APARTMENTTHREADED = 0x2;
+    public const int RpcChangedMode = unchecked((int)0x80010106);
 
     [DllImport("ole32.dll")]
     public static extern int CoInitializeEx(IntPtr reserved, int coInit);
 
     [DllImport("ole32.dll")]
     public static extern void CoUninitialize();
+
+    [DllImport("ole32.dll")]
+    private static extern int PropVariantClear(ref PropVariant propVariant);
+
+    public static ComScope EnterComScope(int coInit)
+    {
+        var hr = CoInitializeEx(IntPtr.Zero, coInit);
+        return hr switch
+        {
+            0 or 1 => new ComScope(true),
+            RpcChangedMode => new ComScope(false),
+            _ => throw Marshal.GetExceptionForHR(hr) ?? new COMException("Could not initialize COM.", hr),
+        };
+    }
+
+    public static void ClearPropVariant(ref PropVariant propVariant)
+    {
+        var hr = PropVariantClear(ref propVariant);
+        if (hr < 0)
+        {
+            throw Marshal.GetExceptionForHR(hr) ?? new COMException("Could not clear PROPVARIANT.", hr);
+        }
+    }
+
+    public static void ReleaseComObject(object? comObject)
+    {
+        if (comObject is not null && Marshal.IsComObject(comObject))
+        {
+            Marshal.ReleaseComObject(comObject);
+        }
+    }
+
+    internal readonly struct ComScope(bool shouldUninitialize) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (shouldUninitialize)
+            {
+                CoUninitialize();
+            }
+        }
+    }
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 2)]
@@ -92,6 +136,53 @@ internal enum CLSCTX : uint
     All = InprocServer | InprocHandler | LocalServer | RemoteServer,
 }
 
+[Flags]
+internal enum DeviceState : uint
+{
+    Active = 0x00000001,
+    Disabled = 0x00000002,
+    NotPresent = 0x00000004,
+    Unplugged = 0x00000008,
+    All = 0x0000000F,
+}
+
+internal enum StorageAccessMode : uint
+{
+    Read = 0x00000000,
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct PropertyKey
+{
+    public Guid FormatId;
+    public uint PropertyId;
+
+    public PropertyKey(Guid formatId, uint propertyId)
+    {
+        FormatId = formatId;
+        PropertyId = propertyId;
+    }
+}
+
+[StructLayout(LayoutKind.Explicit)]
+internal struct PropVariant
+{
+    [FieldOffset(0)]
+    private readonly ushort variantType;
+
+    [FieldOffset(8)]
+    private readonly IntPtr pointerValue;
+
+    public VarEnum VariantType => (VarEnum)variantType;
+
+    public string? GetString()
+    {
+        return VariantType == VarEnum.VT_LPWSTR
+            ? Marshal.PtrToStringUni(pointerValue)
+            : null;
+    }
+}
+
 [ComImport]
 [Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
 internal sealed class MMDeviceEnumeratorComObject
@@ -103,10 +194,29 @@ internal sealed class MMDeviceEnumeratorComObject
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 internal interface IMMDeviceEnumerator
 {
-    int NotImpl1();
+    [return: MarshalAs(UnmanagedType.Interface)]
+    IMMDeviceCollection EnumAudioEndpoints(EDataFlow dataFlow, DeviceState stateMask);
 
     [return: MarshalAs(UnmanagedType.Interface)]
     IMMDevice GetDefaultAudioEndpoint(EDataFlow dataFlow, ERole role);
+
+    [return: MarshalAs(UnmanagedType.Interface)]
+    IMMDevice GetDevice([MarshalAs(UnmanagedType.LPWStr)] string endpointId);
+
+    int NotImpl4();
+
+    int NotImpl5();
+}
+
+[ComImport]
+[Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IMMDeviceCollection
+{
+    void GetCount(out int deviceCount);
+
+    [return: MarshalAs(UnmanagedType.Interface)]
+    IMMDevice Item(int deviceNumber);
 }
 
 [ComImport]
@@ -119,6 +229,30 @@ internal interface IMMDevice
         CLSCTX clsCtx,
         IntPtr activationParams,
         [MarshalAs(UnmanagedType.Interface)] out object interfacePointer);
+
+    [return: MarshalAs(UnmanagedType.Interface)]
+    IPropertyStore OpenPropertyStore(StorageAccessMode storageAccessMode);
+
+    [return: MarshalAs(UnmanagedType.LPWStr)]
+    string GetId();
+
+    DeviceState GetState();
+}
+
+[ComImport]
+[Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IPropertyStore
+{
+    void GetCount(out int propertyCount);
+
+    void GetAt(int propertyIndex, out PropertyKey key);
+
+    void GetValue(ref PropertyKey key, out PropVariant value);
+
+    int NotImpl4();
+
+    int NotImpl5();
 }
 
 [ComImport]

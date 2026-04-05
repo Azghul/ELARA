@@ -4,7 +4,7 @@ namespace SimpleAudioRecorder;
 
 internal sealed class AboutDialog : Form
 {
-    public AboutDialog(string githubUrl)
+    public AboutDialog(string githubUrl, string logDirectory)
     {
         Text = "About Simple Audio Recorder";
         StartPosition = FormStartPosition.CenterParent;
@@ -13,7 +13,7 @@ internal sealed class AboutDialog : Form
         MinimizeBox = false;
         ShowIcon = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(420, 210);
+        ClientSize = new Size(420, 232);
         BackColor = Color.FromArgb(15, 19, 40);
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
 
@@ -36,7 +36,7 @@ internal sealed class AboutDialog : Form
 
         var copyright = new Label
         {
-            Text = "Copyright © SickPuppyCoding",
+            Text = "Copyright (c) SickPuppyCoding",
             AutoSize = true,
             ForeColor = Color.FromArgb(150, 158, 198),
             Location = new Point(24, 94),
@@ -57,6 +57,22 @@ internal sealed class AboutDialog : Form
             Process.Start(new ProcessStartInfo(githubUrl) { UseShellExecute = true });
         };
 
+        var openLogsButton = new Button
+        {
+            Text = "Open Log Files",
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(33, 39, 76),
+            ForeColor = Color.White,
+            Size = new Size(126, 34),
+            Location = new Point(24, ClientSize.Height - 54),
+        };
+        openLogsButton.FlatAppearance.BorderColor = Color.FromArgb(66, 73, 109);
+        openLogsButton.Click += (_, _) =>
+        {
+            Directory.CreateDirectory(logDirectory);
+            Process.Start(new ProcessStartInfo(logDirectory) { UseShellExecute = true });
+        };
+
         var closeButton = new Button
         {
             Text = "Close",
@@ -73,6 +89,7 @@ internal sealed class AboutDialog : Form
         Controls.Add(subtitle);
         Controls.Add(copyright);
         Controls.Add(linkLabel);
+        Controls.Add(openLogsButton);
         Controls.Add(closeButton);
 
         AcceptButton = closeButton;

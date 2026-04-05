@@ -48,21 +48,25 @@ public sealed class AudioCaptureService : IDisposable
 
     public TimeSpan Elapsed => stopwatch.Elapsed;
 
-    public string OutputDirectory { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-        "Simple Audio Recorder");
+    public string OutputDirectory { get; } = AppPaths.RecordingDirectory;
+
+    public string LogDirectory => AppLogger.LogDirectory;
+
+    public string? ActiveMicrophoneDeviceName { get; private set; }
+
+    public string? ActiveMicrophoneDeviceId { get; private set; }
 
     public float ConsumePeak()
     {
         return Interlocked.Exchange(ref peakMilli, 0) / 1000F;
     }
 
-    public async Task StartAsync(CaptureMode mode)
+    public async Task StartAsync(CaptureMode mode, string? microphoneDeviceId = null)
     {
         await transitionLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            StartCore(mode);
+            StartCore(mode, microphoneDeviceId);
         }
         finally
         {
@@ -99,7 +103,7 @@ public sealed class AudioCaptureService : IDisposable
         transitionLock.Dispose();
     }
 
-    private void StartCore(CaptureMode mode)
+    private void StartCore(CaptureMode mode, string? microphoneDeviceId)
     {
         if (IsRecording)
         {
@@ -109,6 +113,8 @@ public sealed class AudioCaptureService : IDisposable
         Directory.CreateDirectory(OutputDirectory);
 
         currentMode = mode;
+        ActiveMicrophoneDeviceId = null;
+        ActiveMicrophoneDeviceName = null;
         tempDirectory = Path.Combine(Path.GetTempPath(), "SimpleAudioRecorder", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
 
@@ -118,6 +124,9 @@ public sealed class AudioCaptureService : IDisposable
             OutputDirectory,
             $"{DateTime.Now:yyyy-MM-dd HH-mm-ss} {mode.ToDisplayName().ToLowerInvariant()}.wav");
 
+        AppLogger.Info(
+            $"Starting recording. Mode={mode}; RequestedMicrophoneId={(microphoneDeviceId ?? "<default>")}; OutputFile={outputFilePath}; TempDirectory={tempDirectory}");
+
         try
         {
             if (mode is CaptureMode.Both or CaptureMode.Microphone)
@@ -125,12 +134,15 @@ public sealed class AudioCaptureService : IDisposable
                 microphoneSource = new WasapiCaptureSource(
                     "microphone",
                     WasapiCaptureKind.Microphone,
+                    microphoneDeviceId,
                     tempMicrophonePath,
                     TargetSampleRate,
                     TargetBitsPerSample,
                     RequestedChannels,
                     ReportPeak);
                 microphoneSource.Start();
+                ActiveMicrophoneDeviceId = microphoneSource.ResolvedDeviceId;
+                ActiveMicrophoneDeviceName = microphoneSource.ResolvedDeviceName;
             }
 
             if (mode is CaptureMode.Both or CaptureMode.System)
@@ -138,6 +150,7 @@ public sealed class AudioCaptureService : IDisposable
                 systemSource = new WasapiCaptureSource(
                     "system audio",
                     WasapiCaptureKind.SystemLoopback,
+                    null,
                     tempSystemPath,
                     TargetSampleRate,
                     TargetBitsPerSample,
@@ -149,9 +162,12 @@ public sealed class AudioCaptureService : IDisposable
             Interlocked.Exchange(ref peakMilli, 0);
             stopwatch.Restart();
             IsRecording = true;
+            AppLogger.Info(
+                $"Recording active. Mode={currentMode}; Microphone={(ActiveMicrophoneDeviceName ?? "<not used>")} [{(ActiveMicrophoneDeviceId ?? "<n/a>")}]");
         }
-        catch
+        catch (Exception ex)
         {
+            AppLogger.Error("Recording startup failed.", ex);
             CleanupCaptureSources();
             CleanupTempFiles();
             throw;
@@ -166,6 +182,7 @@ public sealed class AudioCaptureService : IDisposable
         }
 
         Exception? stopError = null;
+        RecordingInfo? recordingInfo = null;
 
         try
         {
@@ -228,7 +245,15 @@ public sealed class AudioCaptureService : IDisposable
                     "The recording file was created but did not contain audio. If you recorded system audio, make sure audio was actively playing.");
             }
 
-            return new RecordingInfo(outputFilePath, currentMode, stopwatch.Elapsed, DateTime.Now);
+            recordingInfo = new RecordingInfo(outputFilePath, currentMode, stopwatch.Elapsed, DateTime.Now);
+            AppLogger.Info(
+                $"Recording saved. File={recordingInfo.Value.FilePath}; Duration={recordingInfo.Value.Duration}; Mode={recordingInfo.Value.Mode}");
+            return recordingInfo.Value;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Recording stop/save failed.", ex);
+            throw;
         }
         finally
         {
@@ -243,6 +268,8 @@ public sealed class AudioCaptureService : IDisposable
         systemSource?.Dispose();
         microphoneSource = null;
         systemSource = null;
+        ActiveMicrophoneDeviceId = null;
+        ActiveMicrophoneDeviceName = null;
     }
 
     private void CleanupTempFiles()
@@ -261,6 +288,7 @@ public sealed class AudioCaptureService : IDisposable
         tempDirectory = null;
         tempMicrophonePath = null;
         tempSystemPath = null;
+        outputFilePath = null;
     }
 
     private void ReportPeak(float peak)

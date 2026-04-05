@@ -14,6 +14,7 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer uiTimer = new() { Interval = 90 };
     private readonly ToolTip toolTip = new() { ShowAlways = true };
     private readonly ContextMenuStrip appMenu = new();
+    private readonly ToolStripMenuItem microphoneMenuItem = new("Microphone");
 
     private readonly Label timerLabel = new();
     private readonly LinkLabel modeLink = new();
@@ -22,6 +23,8 @@ public sealed class MainForm : Form
     private readonly RecordActionButton recordButton = new();
 
     private CaptureMode selectedMode = CaptureMode.Both;
+    private string? selectedMicrophoneDeviceId;
+    private string? selectedMicrophoneDeviceName;
     private bool previewMode;
     private bool previewRecording;
 
@@ -55,6 +58,7 @@ public sealed class MainForm : Form
         uiTimer.Tick += HandleUiTick;
         modeLink.LinkClicked += (_, _) => CycleMode();
         recordButton.Click += async (_, _) => await ToggleRecordingAsync();
+        AppLogger.Info("Main window initialized.");
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -172,10 +176,15 @@ public sealed class MainForm : Form
 
     private void BuildContextMenu()
     {
+        microphoneMenuItem.DropDownOpening += (_, _) => RefreshMicrophoneMenu();
+
         appMenu.Items.Add("About App", null, (_, _) => ShowAboutDialog());
         appMenu.Items.Add("View Audio Files", null, (_, _) => OpenAudioFolder());
+        appMenu.Items.Add(microphoneMenuItem);
         appMenu.Items.Add(new ToolStripSeparator());
         appMenu.Items.Add("Exit", null, (_, _) => Close());
+
+        RefreshMicrophoneMenu();
     }
 
     private void LayoutCompactControls()
@@ -230,13 +239,19 @@ public sealed class MainForm : Form
 
         try
         {
-            await captureService.StartAsync(selectedMode);
+            AppLogger.Info(
+                $"Start requested from UI. Mode={selectedMode}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]");
+            await captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId);
             timerLabel.Text = "00:00";
             uiTimer.Start();
-            UpdateStatus("Recording", Color.FromArgb(255, 142, 168), $"{selectedMode.ToDisplayName()} capture is recording.");
+            var recordingDetails = selectedMode is CaptureMode.System
+                ? $"{selectedMode.ToDisplayName()} capture is recording."
+                : $"{selectedMode.ToDisplayName()} capture is recording with {captureService.ActiveMicrophoneDeviceName ?? selectedMicrophoneDeviceName ?? "the Windows default microphone"}.";
+            UpdateStatus("Recording", Color.FromArgb(255, 142, 168), recordingDetails);
         }
         catch (Exception ex)
         {
+            AppLogger.Error("UI start recording failed.", ex);
             UpdateStatus("Blocked", Color.FromArgb(255, 196, 120), ex.Message);
             MessageBox.Show(this, ex.Message, "Audio Capture Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -253,6 +268,7 @@ public sealed class MainForm : Form
 
         try
         {
+            AppLogger.Info("Stop requested from UI.");
             var info = await captureService.StopAsync();
             timerLabel.Text = "00:00";
             levelMeter.ResetMeter();
@@ -260,6 +276,7 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            AppLogger.Error("UI stop recording failed.", ex);
             UpdateStatus("Error", Color.FromArgb(255, 142, 168), ex.Message);
             MessageBox.Show(this, ex.Message, "Audio Capture Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
@@ -275,6 +292,7 @@ public sealed class MainForm : Form
         recordButton.IsRecording = IsVisualRecording();
         recordButton.Enabled = previewMode || !captureService.IsRecording || recordButton.IsRecording;
         modeLink.Enabled = !IsVisualRecording();
+        microphoneMenuItem.Enabled = !IsVisualRecording();
         UpdateModeText();
     }
 
@@ -292,6 +310,7 @@ public sealed class MainForm : Form
             _ => CaptureMode.Both,
         };
 
+        AppLogger.Info($"Capture mode changed to {selectedMode}.");
         UpdateModeText();
         UpdateStatus(null, default, null);
     }
@@ -299,7 +318,8 @@ public sealed class MainForm : Form
     private void UpdateModeText()
     {
         modeLink.Text = selectedMode.ToDisplayName();
-        toolTip.SetToolTip(modeLink, $"{selectedMode.ToDisplayName()} capture. Click to switch between Both, Mic, and System.");
+        var microphoneText = selectedMicrophoneDeviceName ?? "Windows default microphone";
+        toolTip.SetToolTip(modeLink, $"{selectedMode.ToDisplayName()} capture. Click to switch between Both, Mic, and System. Current microphone: {microphoneText}.");
     }
 
     private void UpdateStatus(string? text, Color color, string? details)
@@ -332,13 +352,124 @@ public sealed class MainForm : Form
     private void OpenAudioFolder()
     {
         Directory.CreateDirectory(captureService.OutputDirectory);
+        AppLogger.Info($"Opening audio folder: {captureService.OutputDirectory}");
         Process.Start(new ProcessStartInfo(captureService.OutputDirectory) { UseShellExecute = true });
     }
 
     private void ShowAboutDialog()
     {
-        using var dialog = new AboutDialog(GitHubUrl);
+        AppLogger.Info("Opening About dialog.");
+        using var dialog = new AboutDialog(GitHubUrl, captureService.LogDirectory);
         dialog.ShowDialog(this);
+    }
+
+    private void RefreshMicrophoneMenu()
+    {
+        microphoneMenuItem.DropDownItems.Clear();
+
+        if (captureService.IsRecording || previewMode)
+        {
+            microphoneMenuItem.Text = "Microphone";
+            microphoneMenuItem.DropDownItems.Add(new ToolStripMenuItem("Locked while recording") { Enabled = false });
+            return;
+        }
+
+        IReadOnlyList<AudioInputDeviceInfo> microphones;
+        try
+        {
+            microphones = AudioInputDeviceCatalog.GetMicrophones();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Could not enumerate microphones for the context menu.", ex);
+            microphoneMenuItem.Text = "Microphone";
+            microphoneMenuItem.DropDownItems.Add(new ToolStripMenuItem("Could not load microphones") { Enabled = false });
+            return;
+        }
+
+        var defaultLabel = "Windows default";
+        var effectiveSelectionId = selectedMicrophoneDeviceId;
+        var effectiveSelectionName = selectedMicrophoneDeviceName;
+
+        if (string.IsNullOrWhiteSpace(effectiveSelectionId))
+        {
+            var defaultMicrophone = microphones.FirstOrDefault(device => device.IsDefault);
+            effectiveSelectionName = defaultMicrophone.DisplayName;
+        }
+        else
+        {
+            var selectedMicrophone = microphones.FirstOrDefault(device => string.Equals(device.Id, effectiveSelectionId, StringComparison.Ordinal));
+            if (selectedMicrophone != default)
+            {
+                effectiveSelectionName = selectedMicrophone.DisplayName;
+            }
+        }
+
+        microphoneMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+            defaultLabel,
+            isChecked: string.IsNullOrWhiteSpace(selectedMicrophoneDeviceId),
+            onClick: () =>
+            {
+                selectedMicrophoneDeviceId = null;
+                selectedMicrophoneDeviceName = null;
+                AppLogger.Info("Microphone selection reset to Windows default.");
+                UpdateModeText();
+            }));
+
+        if (microphones.Count > 0)
+        {
+            microphoneMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        var selectedDeviceMissing = !string.IsNullOrWhiteSpace(selectedMicrophoneDeviceId)
+            && microphones.All(device => !string.Equals(device.Id, selectedMicrophoneDeviceId, StringComparison.Ordinal));
+
+        if (selectedDeviceMissing)
+        {
+            microphoneMenuItem.DropDownItems.Add(new ToolStripMenuItem("Selected microphone is unavailable") { Enabled = false });
+            microphoneMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        foreach (var microphone in microphones)
+        {
+            var localMicrophone = microphone;
+            microphoneMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+                localMicrophone.MenuLabel,
+                isChecked: string.Equals(localMicrophone.Id, selectedMicrophoneDeviceId, StringComparison.Ordinal),
+                onClick: () =>
+                {
+                    selectedMicrophoneDeviceId = localMicrophone.Id;
+                    selectedMicrophoneDeviceName = localMicrophone.DisplayName;
+                    AppLogger.Info($"Microphone selection changed to {localMicrophone.DisplayName} [{localMicrophone.Id}]");
+                    UpdateModeText();
+                }));
+        }
+
+        if (microphones.Count == 0)
+        {
+            microphoneMenuItem.DropDownItems.Add(new ToolStripMenuItem("No active microphones found") { Enabled = false });
+        }
+
+        var headerText = effectiveSelectionName is { Length: > 0 }
+            ? $"Microphone ({effectiveSelectionName})"
+            : "Microphone";
+        if (selectedDeviceMissing)
+        {
+            headerText = "Microphone (Unavailable)";
+        }
+
+        microphoneMenuItem.Text = headerText;
+    }
+
+    private static ToolStripMenuItem CreateMicrophoneMenuItem(string text, bool isChecked, Action onClick)
+    {
+        var item = new ToolStripMenuItem(text)
+        {
+            Checked = isChecked,
+            CheckOnClick = false,
+        };
+        item.Click += (_, _) => onClick();
+        return item;
     }
 
     private void AttachContextMenu(Control root, ContextMenuStrip menu)

@@ -13,6 +13,7 @@ internal sealed class WasapiCaptureSource : IDisposable
 {
     private readonly string friendlyName;
     private readonly WasapiCaptureKind kind;
+    private readonly string? preferredDeviceId;
     private readonly string tempFilePath;
     private readonly int sampleRate;
     private readonly short bitsPerSample;
@@ -24,10 +25,13 @@ internal sealed class WasapiCaptureSource : IDisposable
     private Thread? workerThread;
     private Exception? startupException;
     private Exception? backgroundException;
+    private string? resolvedDeviceId;
+    private string? resolvedDeviceName;
 
     public WasapiCaptureSource(
         string friendlyName,
         WasapiCaptureKind kind,
+        string? preferredDeviceId,
         string tempFilePath,
         int sampleRate,
         short bitsPerSample,
@@ -36,6 +40,7 @@ internal sealed class WasapiCaptureSource : IDisposable
     {
         this.friendlyName = friendlyName;
         this.kind = kind;
+        this.preferredDeviceId = preferredDeviceId;
         this.tempFilePath = tempFilePath;
         this.sampleRate = sampleRate;
         this.bitsPerSample = bitsPerSample;
@@ -52,11 +57,14 @@ internal sealed class WasapiCaptureSource : IDisposable
 
         startupException = null;
         backgroundException = null;
+        resolvedDeviceId = null;
+        resolvedDeviceName = null;
         workerThread = new Thread(CaptureThreadProc)
         {
             IsBackground = true,
             Name = $"SimpleAudioRecorder-{friendlyName}",
         };
+        AppLogger.Info($"{friendlyName} capture thread starting. PreferredDeviceId={(preferredDeviceId ?? "<default>")}; TempFile={tempFilePath}");
         workerThread.Start();
 
         if (!startSignal.Wait(TimeSpan.FromSeconds(8)))
@@ -69,6 +77,10 @@ internal sealed class WasapiCaptureSource : IDisposable
             throw startupException;
         }
     }
+
+    public string? ResolvedDeviceId => resolvedDeviceId;
+
+    public string? ResolvedDeviceName => resolvedDeviceName;
 
     public void Stop()
     {
@@ -119,13 +131,14 @@ internal sealed class WasapiCaptureSource : IDisposable
 
         try
         {
-            CoreAudioInterop.CoInitializeEx(IntPtr.Zero, CoreAudioInterop.COINIT_MULTITHREADED);
+            using var _ = CoreAudioInterop.EnterComScope(CoreAudioInterop.COINIT_MULTITHREADED);
 
             enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(
-                Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))!)!;
-            device = enumerator.GetDefaultAudioEndpoint(
-                kind == WasapiCaptureKind.SystemLoopback ? EDataFlow.Render : EDataFlow.Capture,
-                ERole.Multimedia);
+                typeof(MMDeviceEnumeratorComObject))!;
+            device = ResolveDevice(enumerator);
+            resolvedDeviceId = device.GetId();
+            resolvedDeviceName = AudioInputDeviceCatalog.GetFriendlyName(device);
+            AppLogger.Info($"{friendlyName} capture using endpoint '{resolvedDeviceName}' [{resolvedDeviceId}]");
 
             var audioClientGuid = typeof(IAudioClient).GUID;
             device.Activate(ref audioClientGuid, CLSCTX.All, IntPtr.Zero, out var audioClientObject);
@@ -151,6 +164,7 @@ internal sealed class WasapiCaptureSource : IDisposable
             writer = new BinaryWriter(fileStream);
 
             audioClient.Start();
+            AppLogger.Info($"{friendlyName} capture started successfully.");
             startSignal.Set();
 
             while (!stopSignal.IsSet)
@@ -161,9 +175,11 @@ internal sealed class WasapiCaptureSource : IDisposable
 
             ReadAvailablePackets(captureClient, writer, (short)format.Channels, (short)format.BitsPerSample);
             audioClient.Stop();
+            AppLogger.Info($"{friendlyName} capture stopped cleanly.");
         }
         catch (Exception ex)
         {
+            AppLogger.Error($"{friendlyName} capture failed.", ex);
             if (!startSignal.IsSet)
             {
                 startupException = new InvalidOperationException(
@@ -201,9 +217,31 @@ internal sealed class WasapiCaptureSource : IDisposable
             {
                 startSignal.Set();
             }
-
-            CoreAudioInterop.CoUninitialize();
         }
+    }
+
+    private IMMDevice ResolveDevice(IMMDeviceEnumerator enumerator)
+    {
+        if (kind == WasapiCaptureKind.SystemLoopback)
+        {
+            return enumerator.GetDefaultAudioEndpoint(EDataFlow.Render, ERole.Multimedia);
+        }
+
+        if (!string.IsNullOrWhiteSpace(preferredDeviceId))
+        {
+            try
+            {
+                return enumerator.GetDevice(preferredDeviceId);
+            }
+            catch (COMException ex)
+            {
+                throw new InvalidOperationException(
+                    "The selected microphone is no longer available. Right-click the app and choose a different microphone.",
+                    ex);
+            }
+        }
+
+        return enumerator.GetDefaultAudioEndpoint(EDataFlow.Capture, ERole.Multimedia);
     }
 
     private void ReadAvailablePackets(IAudioCaptureClient captureClient, BinaryWriter writer, short channels, short bitsPerSample)
@@ -311,9 +349,6 @@ internal sealed class WasapiCaptureSource : IDisposable
 
     private static void ReleaseComObject(object? comObject)
     {
-        if (comObject is not null && Marshal.IsComObject(comObject))
-        {
-            Marshal.ReleaseComObject(comObject);
-        }
+        CoreAudioInterop.ReleaseComObject(comObject);
     }
 }
