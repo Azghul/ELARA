@@ -29,8 +29,10 @@ public static class CaptureModeExtensions
 public sealed class AudioCaptureService : IDisposable
 {
     private const int TargetSampleRate = 48_000;
-    private const short TargetBitsPerSample = 16;
-    private const short RequestedChannels = 2;
+    private const short TargetOutputBitsPerSample = 16;
+    private const short TargetCaptureBitsPerSample = 32;
+    private const short MicrophoneRequestedChannels = 1;
+    private const short SystemRequestedChannels = 2;
 
     private readonly SemaphoreSlim transitionLock = new(1, 1);
     private readonly Stopwatch stopwatch = new();
@@ -137,8 +139,8 @@ public sealed class AudioCaptureService : IDisposable
                     microphoneDeviceId,
                     tempMicrophonePath,
                     TargetSampleRate,
-                    TargetBitsPerSample,
-                    RequestedChannels,
+                    TargetCaptureBitsPerSample,
+                    MicrophoneRequestedChannels,
                     ReportPeak);
                 microphoneSource.Start();
                 ActiveMicrophoneDeviceId = microphoneSource.ResolvedDeviceId;
@@ -153,8 +155,8 @@ public sealed class AudioCaptureService : IDisposable
                     null,
                     tempSystemPath,
                     TargetSampleRate,
-                    TargetBitsPerSample,
-                    RequestedChannels,
+                    TargetCaptureBitsPerSample,
+                    SystemRequestedChannels,
                     ReportPeak);
                 systemSource.Start();
             }
@@ -220,21 +222,21 @@ public sealed class AudioCaptureService : IDisposable
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         outputFilePath,
                         TargetSampleRate,
-                        TargetBitsPerSample);
+                        TargetOutputBitsPerSample);
                     break;
                 case CaptureMode.Microphone:
                     WavUtility.WriteMonoWavFromPcm(
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         outputFilePath,
                         TargetSampleRate,
-                        TargetBitsPerSample);
+                        TargetOutputBitsPerSample);
                     break;
                 case CaptureMode.System:
                     WavUtility.WriteMonoWavFromPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         outputFilePath,
                         TargetSampleRate,
-                        TargetBitsPerSample);
+                        TargetOutputBitsPerSample);
                     break;
             }
 

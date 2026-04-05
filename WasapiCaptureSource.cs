@@ -144,7 +144,6 @@ internal sealed class WasapiCaptureSource : IDisposable
             device.Activate(ref audioClientGuid, CLSCTX.All, IntPtr.Zero, out var audioClientObject);
             audioClient = (IAudioClient)audioClientObject;
 
-            var format = WaveFormatEx.CreatePcm(sampleRate, requestedChannels, bitsPerSample);
             var flags = AudioClientStreamFlags.AutoConvertPcm
                 | AudioClientStreamFlags.SourceDefaultQuality
                 | AudioClientStreamFlags.NoPersist;
@@ -154,7 +153,9 @@ internal sealed class WasapiCaptureSource : IDisposable
                 flags |= AudioClientStreamFlags.Loopback;
             }
 
-            audioClient.Initialize(AudioClientShareMode.Shared, flags, 2_000_000, 0, ref format, IntPtr.Zero);
+            var format = InitializeAudioClient(audioClient, flags);
+            AppLogger.Info(
+                $"{friendlyName} capture format active. FormatTag={format.FormatTag}; Channels={format.Channels}; SampleRate={format.SamplesPerSec}; BitsPerSample={format.BitsPerSample}");
 
             var captureClientGuid = typeof(IAudioCaptureClient).GUID;
             audioClient.GetService(ref captureClientGuid, out var captureClientObject);
@@ -280,9 +281,9 @@ internal sealed class WasapiCaptureSource : IDisposable
         short channels,
         short bitsPerSample)
     {
-        if (bitsPerSample != 16)
+        if (bitsPerSample is not 16 and not 32)
         {
-            throw new NotSupportedException("Only 16-bit PCM capture is supported in this build.");
+            throw new NotSupportedException($"Only 16-bit PCM and 32-bit float capture are supported in this build. Received {bitsPerSample}-bit.");
         }
 
         if ((flags & AudioClientBufferFlags.Silent) != 0 || dataPointer == IntPtr.Zero)
@@ -304,20 +305,9 @@ internal sealed class WasapiCaptureSource : IDisposable
             for (var frameIndex = 0; frameIndex < frameCount; frameIndex++)
             {
                 var frameOffset = frameIndex * bytesPerFrame;
-                short mixedSample;
-
-                if (channels <= 1)
-                {
-                    mixedSample = ReadInt16(buffer, frameOffset);
-                }
-                else
-                {
-                    var left = ReadInt16(buffer, frameOffset);
-                    var right = ReadInt16(buffer, frameOffset + 2);
-                    mixedSample = (short)((left + right) / 2);
-                }
-
-                var level = Math.Abs(mixedSample) / 32768F;
+                var monoSample = MixFrameToMono(buffer, frameOffset, channels, bitsPerSample);
+                var mixedSample = FloatToPcm16(monoSample);
+                var level = Math.Abs(monoSample);
                 if (level > peak)
                 {
                     peak = level;
@@ -334,6 +324,27 @@ internal sealed class WasapiCaptureSource : IDisposable
         }
     }
 
+    private WaveFormatEx InitializeAudioClient(IAudioClient audioClient, AudioClientStreamFlags flags)
+    {
+        if (bitsPerSample >= 32)
+        {
+            var floatFormat = WaveFormatEx.CreateIeeeFloat(sampleRate, requestedChannels);
+            try
+            {
+                audioClient.Initialize(AudioClientShareMode.Shared, flags, 2_000_000, 0, ref floatFormat, IntPtr.Zero);
+                return floatFormat;
+            }
+            catch (COMException ex)
+            {
+                AppLogger.Warn($"{friendlyName} float capture format was not accepted. Falling back to 16-bit PCM. {ex.Message}");
+            }
+        }
+
+        var pcmFormat = WaveFormatEx.CreatePcm(sampleRate, requestedChannels, 16);
+        audioClient.Initialize(AudioClientShareMode.Shared, flags, 2_000_000, 0, ref pcmFormat, IntPtr.Zero);
+        return pcmFormat;
+    }
+
     private static void WriteSilence(BinaryWriter writer, int frameCount)
     {
         for (var index = 0; index < frameCount; index++)
@@ -342,9 +353,54 @@ internal sealed class WasapiCaptureSource : IDisposable
         }
     }
 
+    private static float MixFrameToMono(byte[] buffer, int frameOffset, short channels, short bitsPerSample)
+    {
+        if (channels <= 1)
+        {
+            return bitsPerSample == 32
+                ? ReadFloat32(buffer, frameOffset)
+                : ReadInt16(buffer, frameOffset) / 32768F;
+        }
+
+        float sampleSum = 0F;
+        var activeChannels = 0;
+
+        for (var channelIndex = 0; channelIndex < channels; channelIndex++)
+        {
+            var sampleOffset = frameOffset + channelIndex * (bitsPerSample / 8);
+            var sample = bitsPerSample == 32
+                ? ReadFloat32(buffer, sampleOffset)
+                : ReadInt16(buffer, sampleOffset) / 32768F;
+
+            if (Math.Abs(sample) > 0.0001F)
+            {
+                sampleSum += sample;
+                activeChannels++;
+            }
+        }
+
+        if (activeChannels == 0)
+        {
+            return 0F;
+        }
+
+        return Math.Clamp(sampleSum / activeChannels, -1F, 1F);
+    }
+
     private static short ReadInt16(byte[] buffer, int offset)
     {
         return (short)(buffer[offset] | (buffer[offset + 1] << 8));
+    }
+
+    private static float ReadFloat32(byte[] buffer, int offset)
+    {
+        return Math.Clamp(BitConverter.ToSingle(buffer, offset), -1F, 1F);
+    }
+
+    private static short FloatToPcm16(float sample)
+    {
+        var scaled = Math.Clamp(sample, -1F, 1F) * short.MaxValue;
+        return (short)Math.Clamp(MathF.Round(scaled), short.MinValue, short.MaxValue);
     }
 
     private static void ReleaseComObject(object? comObject)

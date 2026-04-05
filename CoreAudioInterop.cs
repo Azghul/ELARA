@@ -60,6 +60,9 @@ internal static class CoreAudioInterop
 [StructLayout(LayoutKind.Sequential, Pack = 2)]
 internal struct WaveFormatEx
 {
+    public const ushort PcmFormatTag = 1;
+    public const ushort IeeeFloatFormatTag = 3;
+
     public ushort FormatTag;
     public ushort Channels;
     public uint SamplesPerSec;
@@ -73,7 +76,23 @@ internal struct WaveFormatEx
         var blockAlign = (ushort)(channels * (bitsPerSample / 8));
         return new WaveFormatEx
         {
-            FormatTag = 1,
+            FormatTag = PcmFormatTag,
+            Channels = (ushort)channels,
+            SamplesPerSec = (uint)sampleRate,
+            AvgBytesPerSec = (uint)(sampleRate * blockAlign),
+            BlockAlign = blockAlign,
+            BitsPerSample = (ushort)bitsPerSample,
+            Size = 0,
+        };
+    }
+
+    public static WaveFormatEx CreateIeeeFloat(int sampleRate, short channels)
+    {
+        const short bitsPerSample = 32;
+        var blockAlign = (ushort)(channels * (bitsPerSample / 8));
+        return new WaveFormatEx
+        {
+            FormatTag = IeeeFloatFormatTag,
             Channels = (ushort)channels,
             SamplesPerSec = (uint)sampleRate,
             AvgBytesPerSec = (uint)(sampleRate * blockAlign),
