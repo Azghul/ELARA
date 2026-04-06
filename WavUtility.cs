@@ -2,16 +2,28 @@ namespace SimpleAudioRecorder;
 
 internal static class WavUtility
 {
-    private const float TargetPeakLevel = 0.92F;
-    private const float MaximumAutoGain = 3.0F;
+    private static readonly GainProfile SystemGainProfile = new(
+        TargetPeakLevel: 0.92F,
+        TargetActiveRms: 0.18F,
+        MaximumGain: 3.0F,
+        ActivityThreshold: 0.015F);
+
+    private static readonly GainProfile MicrophoneGainProfile = new(
+        TargetPeakLevel: 0.96F,
+        TargetActiveRms: 0.24F,
+        MaximumGain: 8.0F,
+        ActivityThreshold: 0.008F);
 
     public static void WriteMonoWavFromPcm(
         string pcmPath,
         string wavPath,
         int sampleRate,
-        short bitsPerSample)
+        short bitsPerSample,
+        bool isMicrophoneTrack = false)
     {
-        var gain = CalculateGain(pcmPath);
+        var gainProfile = isMicrophoneTrack ? MicrophoneGainProfile : SystemGainProfile;
+        var analysis = AnalyzePcm(pcmPath, gainProfile);
+        var gain = CalculateGain(analysis, gainProfile);
         using var input = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
         using var output = new FileStream(wavPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var writer = new BinaryWriter(output);
@@ -25,7 +37,8 @@ internal static class WavUtility
         }
 
         FinalizeWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, inputLength);
-        AppLogger.Info($"Mono WAV written. File={wavPath}; Gain={gain:0.00}x");
+        AppLogger.Info(
+            $"Mono WAV written. File={wavPath}; Track={(isMicrophoneTrack ? "Microphone" : "System")}; Gain={gain:0.00}x; Peak={analysis.PeakNormalized:0.000}; ActiveRms={analysis.ActiveRmsNormalized:0.000}; ActiveSamples={analysis.ActiveSampleCount}");
     }
 
     public static void WriteStereoWavFromMonoPcm(
@@ -35,8 +48,10 @@ internal static class WavUtility
         int sampleRate,
         short bitsPerSample)
     {
-        var leftGain = CalculateGain(leftPcmPath);
-        var rightGain = CalculateGain(rightPcmPath);
+        var leftAnalysis = AnalyzePcm(leftPcmPath, SystemGainProfile);
+        var rightAnalysis = AnalyzePcm(rightPcmPath, MicrophoneGainProfile);
+        var leftGain = CalculateGain(leftAnalysis, SystemGainProfile);
+        var rightGain = CalculateGain(rightAnalysis, MicrophoneGainProfile);
 
         using var left = new BinaryReader(new FileStream(leftPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
         using var right = new BinaryReader(new FileStream(rightPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
@@ -59,14 +74,22 @@ internal static class WavUtility
         }
 
         FinalizeWaveHeader(writer, channels: 2, sampleRate, bitsPerSample, dataLength);
-        AppLogger.Info($"Stereo WAV written. File={wavPath}; LeftGain={leftGain:0.00}x; RightGain={rightGain:0.00}x");
+        AppLogger.Info(
+            $"Stereo WAV written. File={wavPath}; LeftGain={leftGain:0.00}x; RightGain={rightGain:0.00}x; LeftPeak={leftAnalysis.PeakNormalized:0.000}; RightPeak={rightAnalysis.PeakNormalized:0.000}; LeftActiveRms={leftAnalysis.ActiveRmsNormalized:0.000}; RightActiveRms={rightAnalysis.ActiveRmsNormalized:0.000}");
     }
 
-    private static float CalculateGain(string pcmPath)
+    private static PcmAnalysis AnalyzePcm(string pcmPath, GainProfile gainProfile)
     {
         using var reader = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
 
         short peak = 0;
+        double activeSumSquares = 0D;
+        long activeSampleCount = 0;
+        var threshold = (short)Math.Clamp(
+            MathF.Round(short.MaxValue * gainProfile.ActivityThreshold),
+            1F,
+            short.MaxValue);
+
         while (reader.BaseStream.Position < reader.BaseStream.Length)
         {
             var sample = reader.ReadInt16();
@@ -75,20 +98,37 @@ internal static class WavUtility
             {
                 peak = amplitude;
             }
+
+            if (amplitude >= threshold)
+            {
+                var normalized = sample / (double)short.MaxValue;
+                activeSumSquares += normalized * normalized;
+                activeSampleCount++;
+            }
         }
 
-        if (peak <= 0)
+        var peakNormalized = peak / (float)short.MaxValue;
+        var activeRmsNormalized = activeSampleCount > 0
+            ? (float)Math.Sqrt(activeSumSquares / activeSampleCount)
+            : 0F;
+
+        return new PcmAnalysis(peakNormalized, activeRmsNormalized, activeSampleCount);
+    }
+
+    private static float CalculateGain(PcmAnalysis analysis, GainProfile gainProfile)
+    {
+        if (analysis.PeakNormalized <= 0F)
         {
             return 1F;
         }
 
-        var normalizedPeak = peak / (float)short.MaxValue;
-        if (normalizedPeak >= TargetPeakLevel)
-        {
-            return 1F;
-        }
+        var peakGain = gainProfile.TargetPeakLevel / analysis.PeakNormalized;
+        var rmsGain = analysis.ActiveRmsNormalized > 0F
+            ? gainProfile.TargetActiveRms / analysis.ActiveRmsNormalized
+            : peakGain;
 
-        return Math.Min(MaximumAutoGain, TargetPeakLevel / normalizedPeak);
+        var desiredGain = Math.Max(peakGain, rmsGain);
+        return Math.Clamp(desiredGain, 1F, gainProfile.MaximumGain);
     }
 
     private static short ApplyGain(short sample, float gain)
@@ -98,7 +138,12 @@ internal static class WavUtility
             return sample;
         }
 
-        var scaled = sample * gain;
+        var normalized = sample / (float)short.MaxValue;
+        var boosted = normalized * gain;
+
+        // Gentle saturation keeps boosted mic tracks from sounding harsh when they hit the new gain ceiling.
+        var shaped = MathF.Tanh(boosted) / MathF.Tanh(1.4F);
+        var scaled = Math.Clamp(shaped, -1F, 1F) * short.MaxValue;
         return (short)Math.Clamp(MathF.Round(scaled), short.MinValue, short.MaxValue);
     }
 
@@ -144,4 +189,15 @@ internal static class WavUtility
         writer.Write((int)dataLength);
         writer.Flush();
     }
+
+    private readonly record struct GainProfile(
+        float TargetPeakLevel,
+        float TargetActiveRms,
+        float MaximumGain,
+        float ActivityThreshold);
+
+    private readonly record struct PcmAnalysis(
+        float PeakNormalized,
+        float ActiveRmsNormalized,
+        long ActiveSampleCount);
 }

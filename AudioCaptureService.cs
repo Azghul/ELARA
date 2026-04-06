@@ -166,6 +166,13 @@ public sealed class AudioCaptureService : IDisposable
             IsRecording = true;
             AppLogger.Info(
                 $"Recording active. Mode={currentMode}; Microphone={(ActiveMicrophoneDeviceName ?? "<not used>")} [{(ActiveMicrophoneDeviceId ?? "<n/a>")}]");
+
+            if (ActiveMicrophoneDeviceName is { } microphoneName
+                && microphoneName.Contains("Chat", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLogger.Warn(
+                    $"The selected microphone endpoint '{microphoneName}' appears to be a chat/communications profile. That device profile can limit microphone fidelity independently of the app.");
+            }
         }
         catch (Exception ex)
         {
@@ -229,14 +236,16 @@ public sealed class AudioCaptureService : IDisposable
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         outputFilePath,
                         TargetSampleRate,
-                        TargetOutputBitsPerSample);
+                        TargetOutputBitsPerSample,
+                        isMicrophoneTrack: true);
                     break;
                 case CaptureMode.System:
                     WavUtility.WriteMonoWavFromPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         outputFilePath,
                         TargetSampleRate,
-                        TargetOutputBitsPerSample);
+                        TargetOutputBitsPerSample,
+                        isMicrophoneTrack: false);
                     break;
             }
 
