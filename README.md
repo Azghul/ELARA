@@ -25,27 +25,3 @@ The app writes verbose session logs to a per-user log folder. It prefers the nor
 ```powershell
 dotnet build
 ```
-
-The executable is produced at:
-
-`bin\Debug\net10.0-windows\SimpleAudioRecorder.exe`
-
-## UI Previews
-
-Generate the built-in UI previews and screenshots with:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\render-ui-previews.ps1
-```
-
-This renders the important UI states in isolation and writes PNGs plus a small `manifest.json` to:
-
-`artifacts\ui-previews`
-
-You can also run the preview mode directly:
-
-```powershell
-dotnet run -- --preview
-```
-
-To extend the preview set, add or edit states in `UiPreviewState.CreateDefaults(...)`. The renderer in `UiPreviewRunner.cs` will pick them up automatically and write one PNG per state.
