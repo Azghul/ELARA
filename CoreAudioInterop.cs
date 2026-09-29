@@ -183,7 +183,10 @@ internal struct PropertyKey
     }
 }
 
-[StructLayout(LayoutKind.Explicit)]
+// Padded to the native PROPVARIANT size (24 bytes on x64): the marshaller must
+// reserve the full struct, otherwise native code (e.g. IPropertyStore::GetValue /
+// PropVariantClear) writes past the 16-byte buffer and corrupts the interop frame.
+[StructLayout(LayoutKind.Explicit, Size = 24)]
 internal struct PropVariant
 {
     [FieldOffset(0)]
