@@ -18,6 +18,7 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem microphoneMenuItem = new("Microphone");
     private readonly ToolStripMenuItem systemAudioMenuItem = new("System Audio");
     private readonly ToolStripMenuItem formatMenuItem = new("Format");
+    private readonly WindowControlButton optionsButton = new(WindowControlButtonKind.Options);
     private readonly WindowControlButton minimizeButton = new(WindowControlButtonKind.Minimize);
     private readonly WindowControlButton closeButton = new(WindowControlButtonKind.Close);
     private NotifyIcon? trayIcon;
@@ -205,6 +206,8 @@ public sealed class MainForm : Form
 
         minimizeButton.Click += (_, _) => HideToTray();
         closeButton.Click += (_, _) => Close();
+        optionsButton.Click += (_, _) => ShowOptions();
+        toolTip.SetToolTip(optionsButton, "Options");
 
         modeSelector.Click += (_, _) => OpenSelectorDropdown(modeSelector, modeMenu, RefreshModeMenu);
         micSelector.Click += (_, _) => OpenSelectorDropdown(micSelector, microphoneMenuItem.DropDown, RefreshMicrophoneMenu);
@@ -231,6 +234,7 @@ public sealed class MainForm : Form
         Controls.Add(openLink);
         Controls.Add(minimizeButton);
         Controls.Add(closeButton);
+        Controls.Add(optionsButton);
 
         LayoutCompactControls();
     }
@@ -394,10 +398,11 @@ public sealed class MainForm : Form
     {
         closeButton.Location = new Point(ClientSize.Width - 28, 8);
         minimizeButton.Location = new Point(closeButton.Left - 24, 8);
+        optionsButton.Location = new Point(minimizeButton.Left - 24, 8);
         titleHeader.Location = new Point(18, 8);
 
         // Status badge sits between the title and the window control buttons.
-        statusBadge.Location = new Point(minimizeButton.Left - 8 - statusBadge.Width, 6);
+        statusBadge.Location = new Point(optionsButton.Left - 8 - statusBadge.Width, 6);
 
         timerLabel.Location = new Point(20, 36);
         timerLabel.Size = new Size(ClientSize.Width - 40, 44);
@@ -891,6 +896,7 @@ public sealed class MainForm : Form
     private void AttachDragBehavior(Control control)
     {
         if (control == recordButton || control == minimizeButton || control == closeButton
+            || control == optionsButton
             || control == openLink
             || control == modeSelector || control == micSelector
             || control == systemSelector || control == formatSelector
@@ -912,6 +918,11 @@ public sealed class MainForm : Form
         trayIcon.Visible = true;
         Hide();
         AppLogger.Info("Window hidden to the notification area.");
+    }
+
+    private void ShowOptions()
+    {
+        // Reserved for the upcoming options window; intentionally a no-op for now.
     }
 
     private void RestoreFromTray()
@@ -1017,6 +1028,7 @@ public sealed class MainForm : Form
 
     private enum WindowControlButtonKind
     {
+        Options,
         Minimize,
         Close,
     }
@@ -1058,11 +1070,19 @@ public sealed class MainForm : Form
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            var color = kind == WindowControlButtonKind.Close
-                ? (hovered ? Color.FromArgb(255, 98, 129) : ForeColor)
-                : (hovered ? Color.FromArgb(210, 216, 240) : ForeColor);
+            var color = kind switch
+            {
+                WindowControlButtonKind.Close => hovered ? Color.FromArgb(255, 98, 129) : ForeColor,
+                WindowControlButtonKind.Options => hovered ? Color.FromArgb(178, 161, 255) : ForeColor,
+                _ => hovered ? Color.FromArgb(210, 216, 240) : ForeColor,
+            };
 
-            var caption = kind == WindowControlButtonKind.Close ? "\u2715" : "\u2013";
+            var caption = kind switch
+            {
+                WindowControlButtonKind.Close => "\u2715",
+                WindowControlButtonKind.Options => "\u2699",
+                _ => "\u2013",
+            };
             TextRenderer.DrawText(
                 e.Graphics,
                 caption,
