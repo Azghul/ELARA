@@ -1,6 +1,6 @@
 namespace SimpleAudioRecorder;
 
-internal readonly record struct AudioInputDeviceInfo(string Id, string DisplayName, bool IsDefault)
+internal readonly record struct AudioDeviceInfo(string Id, string DisplayName, bool IsDefault)
 {
     public string MenuLabel => IsDefault ? $"{DisplayName} (Default)" : DisplayName;
 }
@@ -11,7 +11,17 @@ internal static class AudioInputDeviceCatalog
         new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"),
         14);
 
-    public static IReadOnlyList<AudioInputDeviceInfo> GetMicrophones()
+    public static IReadOnlyList<AudioDeviceInfo> GetMicrophones()
+    {
+        return GetDevices(EDataFlow.Capture);
+    }
+
+    public static IReadOnlyList<AudioDeviceInfo> GetPlaybackDevices()
+    {
+        return GetDevices(EDataFlow.Render);
+    }
+
+    private static IReadOnlyList<AudioDeviceInfo> GetDevices(EDataFlow dataFlow)
     {
         using var _ = CoreAudioInterop.EnterComScope(CoreAudioInterop.COINIT_APARTMENTTHREADED);
 
@@ -22,21 +32,21 @@ internal static class AudioInputDeviceCatalog
         try
         {
             enumerator = (IMMDeviceEnumerator)Activator.CreateInstance(typeof(MMDeviceEnumeratorComObject))!;
-            collection = enumerator.EnumAudioEndpoints(EDataFlow.Capture, DeviceState.Active);
+            collection = enumerator.EnumAudioEndpoints(dataFlow, DeviceState.Active);
 
             string? defaultId = null;
             try
             {
-                defaultDevice = enumerator.GetDefaultAudioEndpoint(EDataFlow.Capture, ERole.Multimedia);
+                defaultDevice = enumerator.GetDefaultAudioEndpoint(dataFlow, ERole.Multimedia);
                 defaultId = defaultDevice.GetId();
             }
             catch (Exception ex)
             {
-                AppLogger.Warn($"Could not resolve the default microphone. {ex.Message}");
+                AppLogger.Warn($"Could not resolve the default {(dataFlow == EDataFlow.Render ? "playback" : "microphone")} device. {ex.Message}");
             }
 
             collection.GetCount(out var deviceCount);
-            var devices = new List<AudioInputDeviceInfo>(deviceCount);
+            var devices = new List<AudioDeviceInfo>(deviceCount);
 
             for (var index = 0; index < deviceCount; index++)
             {
@@ -46,7 +56,7 @@ internal static class AudioInputDeviceCatalog
                     device = collection.Item(index);
                     var id = device.GetId();
                     var name = GetFriendlyName(device);
-                    devices.Add(new AudioInputDeviceInfo(id, name, string.Equals(id, defaultId, StringComparison.Ordinal)));
+                    devices.Add(new AudioDeviceInfo(id, name, string.Equals(id, defaultId, StringComparison.Ordinal)));
                 }
                 finally
                 {
@@ -66,8 +76,8 @@ internal static class AudioInputDeviceCatalog
 
             AppLogger.Info(
                 devices.Count == 0
-                    ? "Enumerated microphones: none"
-                    : "Enumerated microphones: " + string.Join(" | ", devices.Select(device => $"{device.DisplayName} [{device.Id}]")));
+                    ? $"Enumerated {(dataFlow == EDataFlow.Render ? "playback devices" : "microphones")}: none"
+                    : $"Enumerated {(dataFlow == EDataFlow.Render ? "playback devices" : "microphones")}: " + string.Join(" | ", devices.Select(device => $"{device.DisplayName} [{device.Id}]")));
 
             return devices;
         }

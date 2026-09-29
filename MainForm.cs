@@ -374,7 +374,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        IReadOnlyList<AudioInputDeviceInfo> microphones;
+        IReadOnlyList<AudioDeviceInfo> microphones;
         try
         {
             microphones = AudioInputDeviceCatalog.GetMicrophones();
