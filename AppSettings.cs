@@ -10,7 +10,7 @@ internal sealed class AppSettings
 
     public string? SelectedPlaybackDeviceId { get; set; }
 
-    public string OutputFormat { get; set; } = nameof(SimpleAudioRecorder.OutputFormat.Mp3);
+    public string OutputFormat { get; set; } = nameof(OutputFormat.Mp3);
 
     public OutputFormat ResolveOutputFormat()
     {
