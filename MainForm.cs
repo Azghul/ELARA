@@ -877,10 +877,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        captureService.CustomOutputDirectory = dialog.SelectedPath;
-        SaveSettings();
-        AppLogger.Info($"Recording output directory changed to: {dialog.SelectedPath}");
-        UpdateModeText();
+        ApplyOutputDirectorySelection(dialog.SelectedPath);
     }
 
     private void AttachContextMenu(Control root, ContextMenuStrip menu)
@@ -922,7 +919,29 @@ public sealed class MainForm : Form
 
     private void ShowOptions()
     {
-        // Reserved for the upcoming options window; intentionally a no-op for now.
+        AppLogger.Info("Opening Options dialog.");
+        using var dialog = new OptionsDialog(
+            captureService.CustomOutputDirectory,
+            AppPaths.RecordingDirectory,
+            onOutputDirectoryChanged: ApplyOutputDirectorySelection,
+            openAudioFiles: OpenAudioFolder,
+            openLogFiles: OpenLogFiles);
+        dialog.ShowDialog(this);
+    }
+
+    private void ApplyOutputDirectorySelection(string? selectedPath)
+    {
+        captureService.CustomOutputDirectory = string.IsNullOrWhiteSpace(selectedPath) ? null : selectedPath;
+        SaveSettings();
+        AppLogger.Info($"Recording output directory set to: {captureService.CustomOutputDirectory ?? "<default>"}");
+        UpdateModeText();
+    }
+
+    private void OpenLogFiles()
+    {
+        Directory.CreateDirectory(captureService.LogDirectory);
+        AppLogger.Info($"Opening log folder: {captureService.LogDirectory}");
+        Process.Start(new ProcessStartInfo(captureService.LogDirectory) { UseShellExecute = true });
     }
 
     private void RestoreFromTray()
