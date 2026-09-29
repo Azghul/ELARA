@@ -22,8 +22,18 @@ public sealed class MainForm : Form
     private readonly WindowControlButton closeButton = new(WindowControlButtonKind.Close);
     private NotifyIcon? trayIcon;
 
+    private readonly ContextMenuStrip modeMenu = new();
     private readonly Label timerLabel = new();
-    private readonly LinkLabel modeLink = new();
+    private readonly Label titleHeader = new();
+    private readonly Label modeFieldLabel = CreateFieldLabel("Mode");
+    private readonly Label micFieldLabel = CreateFieldLabel("Microphone");
+    private readonly Label systemFieldLabel = CreateFieldLabel("System Audio");
+    private readonly Label formatFieldLabel = CreateFieldLabel("Format");
+    private readonly DarkSelector modeSelector = new();
+    private readonly DarkSelector micSelector = new();
+    private readonly DarkSelector systemSelector = new();
+    private readonly DarkSelector formatSelector = new();
+    private readonly LinkLabel openLink = new();
     private readonly StatusBadgeControl statusBadge = new();
     private readonly DotMeterControl levelMeter = new();
     private readonly RecordActionButton recordButton = new();
@@ -41,7 +51,7 @@ public sealed class MainForm : Form
     {
         Text = "Simple Audio Recorder";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(294, 156);
+        ClientSize = new Size(432, 322);
         MinimumSize = Size;
         MaximumSize = Size;
         FormBorderStyle = FormBorderStyle.None;
@@ -66,7 +76,6 @@ public sealed class MainForm : Form
         UpdateWindowRegion();
 
         uiTimer.Tick += HandleUiTick;
-        modeLink.LinkClicked += (_, _) => CycleMode();
         recordButton.Click += async (_, _) => await ToggleRecordingAsync();
         AppLogger.Info("Main window initialized.");
     }
@@ -161,42 +170,105 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        timerLabel.AutoSize = true;
+        titleHeader.AutoSize = true;
+        titleHeader.Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
+        titleHeader.ForeColor = Color.FromArgb(247, 248, 255);
+        titleHeader.BackColor = Color.Transparent;
+        titleHeader.Text = "Simple Audio Recorder";
+
+        timerLabel.AutoSize = false;
         timerLabel.Font = new Font("Cascadia Mono", 28F, FontStyle.Bold, GraphicsUnit.Point);
         timerLabel.ForeColor = Color.FromArgb(250, 251, 255);
+        timerLabel.TextAlign = ContentAlignment.MiddleCenter;
         timerLabel.Text = "00:00";
         timerLabel.BackColor = Color.Transparent;
 
-        modeLink.AutoSize = true;
-        modeLink.Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold, GraphicsUnit.Point);
-        modeLink.LinkBehavior = LinkBehavior.HoverUnderline;
-        modeLink.ActiveLinkColor = Color.FromArgb(187, 176, 255);
-        modeLink.LinkColor = Color.FromArgb(145, 136, 255);
-        modeLink.VisitedLinkColor = modeLink.LinkColor;
-        modeLink.BackColor = Color.Transparent;
-        modeLink.TabStop = false;
+        openLink.AutoSize = true;
+        openLink.Text = "Open Audio Files";
+        openLink.ActiveLinkColor = Color.FromArgb(187, 176, 255);
+        openLink.LinkColor = Color.FromArgb(145, 136, 255);
+        openLink.VisitedLinkColor = openLink.LinkColor;
+        openLink.LinkBehavior = LinkBehavior.HoverUnderline;
+        openLink.BackColor = Color.Transparent;
+        openLink.TabStop = false;
+        openLink.Cursor = Cursors.Hand;
+        openLink.LinkClicked += (_, _) => OpenAudioFolder();
 
-        statusBadge.Visible = false;
         statusBadge.BackColor = Color.Transparent;
-
-        levelMeter.Size = new Size(68, 14);
         levelMeter.BackColor = Color.Transparent;
 
-        recordButton.Size = new Size(ClientSize.Width - Padding.Horizontal, 44);
+        recordButton.Size = new Size(368, 46);
         recordButton.BackColor = Color.Transparent;
 
         minimizeButton.Click += (_, _) => HideToTray();
         closeButton.Click += (_, _) => Close();
 
+        modeSelector.Click += (_, _) => OpenSelectorDropdown(modeSelector, modeMenu, RefreshModeMenu);
+        micSelector.Click += (_, _) => OpenSelectorDropdown(micSelector, microphoneMenuItem.DropDown, RefreshMicrophoneMenu);
+        systemSelector.Click += (_, _) => OpenSelectorDropdown(systemSelector, systemAudioMenuItem.DropDown, RefreshSystemAudioMenu);
+        formatSelector.Click += (_, _) => OpenSelectorDropdown(formatSelector, formatMenuItem.DropDown, RefreshFormatMenu);
+
+        Controls.Add(titleHeader);
         Controls.Add(timerLabel);
-        Controls.Add(modeLink);
         Controls.Add(statusBadge);
         Controls.Add(levelMeter);
+        Controls.Add(modeFieldLabel);
+        Controls.Add(micFieldLabel);
+        Controls.Add(systemFieldLabel);
+        Controls.Add(formatFieldLabel);
+        Controls.Add(modeSelector);
+        Controls.Add(micSelector);
+        Controls.Add(systemSelector);
+        Controls.Add(formatSelector);
         Controls.Add(recordButton);
+        Controls.Add(openLink);
         Controls.Add(minimizeButton);
         Controls.Add(closeButton);
 
         LayoutCompactControls();
+    }
+
+    private static Label CreateFieldLabel(string text)
+    {
+        return new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+            ForeColor = Color.FromArgb(150, 158, 198),
+            BackColor = Color.Transparent,
+        };
+    }
+
+    private void OpenSelectorDropdown(Control anchor, ToolStripDropDown dropDown, Action refresh)
+    {
+        if (IsVisualRecording())
+        {
+            return;
+        }
+
+        refresh();
+        dropDown.Show(anchor, new Point(0, anchor.Height + 2));
+    }
+
+    private void RefreshModeMenu()
+    {
+        modeMenu.Items.Clear();
+
+        foreach (var mode in new[] { CaptureMode.Both, CaptureMode.Microphone, CaptureMode.System })
+        {
+            var localMode = mode;
+            modeMenu.Items.Add(CreateMicrophoneMenuItem(
+                localMode.ToDisplayName(),
+                isChecked: localMode == selectedMode,
+                onClick: () =>
+                {
+                    selectedMode = localMode;
+                    AppLogger.Info($"Capture mode changed to {localMode.ToDisplayName()}.");
+                    UpdateModeText();
+                    UpdateStatus(null, default, null);
+                }));
+        }
     }
 
     private void BuildContextMenu()
@@ -293,27 +365,33 @@ public sealed class MainForm : Form
 
     private void LayoutCompactControls()
     {
-        var left = Padding.Left + 2;
-        var top = Padding.Top + 2;
-        var right = ClientSize.Width - Padding.Right - 2;
+        closeButton.Location = new Point(ClientSize.Width - 28, 8);
+        minimizeButton.Location = new Point(closeButton.Left - 24, 8);
+        titleHeader.Location = new Point(18, 8);
 
-        timerLabel.Location = new Point(left, top);
-        modeLink.Location = new Point(left + 2, timerLabel.Bottom - 2);
+        // Status badge sits between the title and the window control buttons.
+        statusBadge.Location = new Point(minimizeButton.Left - 8 - statusBadge.Width, 6);
 
-        closeButton.Location = new Point(ClientSize.Width - 28, 6);
-        minimizeButton.Location = new Point(closeButton.Left - 24, 6);
+        timerLabel.Location = new Point(20, 36);
+        timerLabel.Size = new Size(ClientSize.Width - 40, 44);
 
-        // Keep the level meter / status badge clear of the window control buttons.
-        var contentRight = minimizeButton.Left - 4;
-        levelMeter.Location = new Point(contentRight - levelMeter.Width, top + 10);
+        levelMeter.Location = new Point((ClientSize.Width - levelMeter.Width) / 2, 84);
 
-        if (statusBadge.Visible)
+        var selectorLeft = 126;
+        var selectorWidth = ClientSize.Width - selectorLeft - 22;
+        var rowFields = new[] { (modeSelector, modeFieldLabel), (micSelector, micFieldLabel), (systemSelector, systemFieldLabel), (formatSelector, formatFieldLabel) };
+        var rowTop = 108;
+        foreach (var (selector, fieldLabel) in rowFields)
         {
-            statusBadge.Location = new Point(contentRight - statusBadge.Width, top + 4);
+            selector.SetBounds(selectorLeft, rowTop, selectorWidth, 26);
+            fieldLabel.Location = new Point(22, rowTop + 5);
+            rowTop += 34;
         }
 
-        recordButton.Location = new Point(Padding.Left + 1, ClientSize.Height - Padding.Bottom - recordButton.Height);
-        recordButton.Width = ClientSize.Width - Padding.Horizontal - 2;
+        recordButton.Location = new Point(32, 248);
+        recordButton.Width = ClientSize.Width - 64;
+
+        openLink.Location = new Point((ClientSize.Width - openLink.PreferredWidth) / 2, ClientSize.Height - 24);
     }
 
     private void HandleUiTick(object? sender, EventArgs e)
@@ -431,61 +509,52 @@ public sealed class MainForm : Form
     {
         recordButton.IsRecording = IsVisualRecording();
         recordButton.Enabled = previewMode || !captureService.IsRecording || recordButton.IsRecording;
-        modeLink.Enabled = !IsVisualRecording();
-        microphoneMenuItem.Enabled = !IsVisualRecording();
-        systemAudioMenuItem.Enabled = !IsVisualRecording();
-        formatMenuItem.Enabled = !IsVisualRecording();
+
+        var selectionLocked = IsVisualRecording();
+        modeSelector.Enabled = !selectionLocked;
+        micSelector.Enabled = !selectionLocked;
+        systemSelector.Enabled = !selectionLocked;
+        formatSelector.Enabled = !selectionLocked;
+        microphoneMenuItem.Enabled = !selectionLocked;
+        systemAudioMenuItem.Enabled = !selectionLocked;
+        formatMenuItem.Enabled = !selectionLocked;
         UpdateModeText();
-    }
-
-    private void CycleMode()
-    {
-        if (IsVisualRecording())
-        {
-            return;
-        }
-
-        selectedMode = selectedMode switch
-        {
-            CaptureMode.Both => CaptureMode.Microphone,
-            CaptureMode.Microphone => CaptureMode.System,
-            _ => CaptureMode.Both,
-        };
-
-        AppLogger.Info($"Capture mode changed to {selectedMode}.");
-        UpdateModeText();
-        UpdateStatus(null, default, null);
     }
 
     private void UpdateModeText()
     {
-        modeLink.Text = selectedMode.ToDisplayName();
-        var microphoneText = selectedMicrophoneDeviceName ?? "Windows default microphone";
-        var systemText = selectedPlaybackDeviceName ?? "Windows default playback device";
+        modeSelector.Text = selectedMode.ToDisplayName();
+        micSelector.Text = selectedMicrophoneDeviceName ?? "Windows default microphone";
+        systemSelector.Text = selectedPlaybackDeviceName ?? "Windows default playback device";
+        formatSelector.Text = selectedFormat.ToDisplayName();
+
         toolTip.SetToolTip(
-            modeLink,
-            $"{selectedMode.ToDisplayName()} capture. Click to switch between Both, Mic, and System. Current microphone: {microphoneText}. System audio: {systemText}. Output format: {selectedFormat.ToDisplayName()}.");
+            modeSelector,
+            $"Capture mode: {selectedMode.ToDisplayName()}. Both records system audio (left) and microphone (right), Mic only the microphone, System only system audio.");
+        toolTip.SetToolTip(micSelector, $"Microphone: {micSelector.Text}");
+        toolTip.SetToolTip(systemSelector, $"System audio: {systemSelector.Text}");
+        toolTip.SetToolTip(formatSelector, $"Output format: {selectedFormat.ToDisplayName()}");
     }
 
     private void UpdateStatus(string? text, Color color, string? details)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
-            statusBadge.Visible = false;
-            levelMeter.Visible = true;
-            toolTip.SetToolTip(statusBadge, null);
-            LayoutCompactControls();
-            Invalidate();
-            return;
+            statusBadge.Caption = "Ready";
+            statusBadge.AccentColor = Color.FromArgb(150, 136, 255);
+            toolTip.SetToolTip(statusBadge, "Idle. Choose mode, devices, and format, then start recording.");
+        }
+        else
+        {
+            statusBadge.Caption = text;
+            statusBadge.AccentColor = color;
+            toolTip.SetToolTip(statusBadge, details ?? text);
         }
 
-        statusBadge.Caption = text;
-        statusBadge.AccentColor = color;
         statusBadge.Visible = true;
-        levelMeter.Visible = false;
-        toolTip.SetToolTip(statusBadge, details ?? text);
-        LayoutCompactControls();
+        levelMeter.Visible = true;
         statusBadge.Invalidate();
+        LayoutCompactControls();
         Invalidate();
     }
 
@@ -752,8 +821,10 @@ public sealed class MainForm : Form
 
     private void AttachDragBehavior(Control control)
     {
-        if (control == recordButton || control == modeLink
-            || control == minimizeButton || control == closeButton)
+        if (control == recordButton || control == minimizeButton || control == closeButton
+            || control == openLink
+            || control == modeSelector || control == micSelector
+            || control == systemSelector || control == formatSelector)
         {
             return;
         }
@@ -932,6 +1003,87 @@ public sealed class MainForm : Form
         }
     }
 
+    private sealed class DarkSelector : Control
+    {
+        private bool hovered;
+
+        public DarkSelector()
+        {
+            Size = new Size(284, 26);
+            Cursor = Cursors.Hand;
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            ForeColor = Color.FromArgb(235, 238, 248);
+            BackColor = Color.Transparent;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnTextChanged(EventArgs e)
+        {
+            base.OnTextChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            using var path = CreateRoundedRectangle(ClientRectangle, 8F);
+            using var fill = new SolidBrush(Enabled && hovered ? Color.FromArgb(31, 37, 68) : Color.FromArgb(24, 29, 56));
+            using var border = new Pen(Enabled
+                ? (hovered ? Color.FromArgb(122, 99, 255) : Color.FromArgb(49, 57, 96))
+                : Color.FromArgb(38, 44, 74));
+
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+
+            var textColor = Enabled ? ForeColor : Color.FromArgb(105, 111, 146);
+            var textRect = new Rectangle(10, 0, Width - 34, Height);
+            TextRenderer.DrawText(
+                e.Graphics,
+                Text,
+                Font,
+                textRect,
+                textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+            var chevronColor = Enabled ? Color.FromArgb(150, 136, 255) : Color.FromArgb(90, 96, 128);
+            var chevronRect = new Rectangle(Width - 26, 0, 18, Height);
+            TextRenderer.DrawText(
+                e.Graphics,
+                "\u25BE",
+                Font,
+                chevronRect,
+                chevronColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+
     private sealed class StatusBadgeControl : Control
     {
         private string caption = string.Empty;
@@ -1084,7 +1236,7 @@ public sealed class MainForm : Form
             Cursor = Cursors.Hand;
             Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
             ForeColor = Color.White;
-            Size = new Size(258, 44);
+            Size = new Size(368, 46);
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
                 | ControlStyles.OptimizedDoubleBuffer
@@ -1169,7 +1321,7 @@ public sealed class MainForm : Form
             e.Graphics.FillPath(brush, path);
             e.Graphics.DrawPath(borderPen, path);
 
-            var text = isRecording ? "Stop" : "Record";
+            var text = isRecording ? "Stop" : "Start Recording";
             var textSize = TextRenderer.MeasureText(text, Font);
             var iconRect = new Rectangle(
                 (Width - textSize.Width - 24) / 2,
