@@ -892,13 +892,13 @@ public sealed class MainForm : Form
             Cursor = Cursors.Hand;
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
             ForeColor = Color.FromArgb(150, 158, 198);
-            BackColor = Color.Transparent;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
                 | ControlStyles.OptimizedDoubleBuffer
                 | ControlStyles.UserPaint
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
+            BackColor = Color.Transparent;
         }
 
         protected override void OnMouseEnter(EventArgs e)
