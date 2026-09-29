@@ -225,6 +225,20 @@ internal sealed class WasapiCaptureSource : IDisposable
     {
         if (kind == WasapiCaptureKind.SystemLoopback)
         {
+            if (!string.IsNullOrWhiteSpace(preferredDeviceId))
+            {
+                try
+                {
+                    return enumerator.GetDevice(preferredDeviceId);
+                }
+                catch (COMException ex)
+                {
+                    throw new InvalidOperationException(
+                        "The selected playback device is no longer available. Right-click the app and choose a different system audio device.",
+                        ex);
+                }
+            }
+
             return enumerator.GetDefaultAudioEndpoint(EDataFlow.Render, ERole.Multimedia);
         }
 
