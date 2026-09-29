@@ -18,6 +18,9 @@ public sealed class MainForm : Form
     private readonly ToolStripMenuItem microphoneMenuItem = new("Microphone");
     private readonly ToolStripMenuItem systemAudioMenuItem = new("System Audio");
     private readonly ToolStripMenuItem formatMenuItem = new("Format");
+    private readonly WindowControlButton minimizeButton = new(WindowControlButtonKind.Minimize);
+    private readonly WindowControlButton closeButton = new(WindowControlButtonKind.Close);
+    private NotifyIcon? trayIcon;
 
     private readonly Label timerLabel = new();
     private readonly LinkLabel modeLink = new();
@@ -72,9 +75,17 @@ public sealed class MainForm : Form
     {
         if (!captureService.IsRecording)
         {
+            DisposeTrayIcon();
             captureService.Dispose();
             base.OnFormClosing(e);
             return;
+        }
+
+        // Make sure the confirmation prompt has a visible owner when closing from the tray.
+        if (!Visible)
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
         }
 
         var result = MessageBox.Show(
@@ -92,6 +103,7 @@ public sealed class MainForm : Form
 
         if (result == DialogResult.No)
         {
+            DisposeTrayIcon();
             captureService.Dispose();
             base.OnFormClosing(e);
             return;
@@ -110,6 +122,7 @@ public sealed class MainForm : Form
             captureService.Dispose();
         }
 
+        DisposeTrayIcon();
         base.OnFormClosing(e);
     }
 
@@ -172,11 +185,16 @@ public sealed class MainForm : Form
         recordButton.Size = new Size(ClientSize.Width - Padding.Horizontal, 44);
         recordButton.BackColor = Color.Transparent;
 
+        minimizeButton.Click += (_, _) => HideToTray();
+        closeButton.Click += (_, _) => Close();
+
         Controls.Add(timerLabel);
         Controls.Add(modeLink);
         Controls.Add(statusBadge);
         Controls.Add(levelMeter);
         Controls.Add(recordButton);
+        Controls.Add(minimizeButton);
+        Controls.Add(closeButton);
 
         LayoutCompactControls();
     }
@@ -281,11 +299,17 @@ public sealed class MainForm : Form
 
         timerLabel.Location = new Point(left, top);
         modeLink.Location = new Point(left + 2, timerLabel.Bottom - 2);
-        levelMeter.Location = new Point(right - levelMeter.Width, top + 10);
+
+        closeButton.Location = new Point(ClientSize.Width - 28, 6);
+        minimizeButton.Location = new Point(closeButton.Left - 24, 6);
+
+        // Keep the level meter / status badge clear of the window control buttons.
+        var contentRight = minimizeButton.Left - 4;
+        levelMeter.Location = new Point(contentRight - levelMeter.Width, top + 10);
 
         if (statusBadge.Visible)
         {
-            statusBadge.Location = new Point(right - statusBadge.Width, top + 4);
+            statusBadge.Location = new Point(contentRight - statusBadge.Width, top + 4);
         }
 
         recordButton.Location = new Point(Padding.Left + 1, ClientSize.Height - Padding.Bottom - recordButton.Height);
@@ -728,7 +752,8 @@ public sealed class MainForm : Form
 
     private void AttachDragBehavior(Control control)
     {
-        if (control == recordButton || control == modeLink)
+        if (control == recordButton || control == modeLink
+            || control == minimizeButton || control == closeButton)
         {
             return;
         }
@@ -738,6 +763,77 @@ public sealed class MainForm : Form
         {
             AttachDragBehavior(child);
         }
+    }
+
+    private void HideToTray()
+    {
+        trayIcon ??= CreateTrayIcon();
+        trayIcon.Visible = true;
+        Hide();
+        AppLogger.Info("Window hidden to the notification area.");
+    }
+
+    private void RestoreFromTray()
+    {
+        if (!Visible)
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        if (trayIcon is not null)
+        {
+            trayIcon.Visible = false;
+        }
+
+        AppLogger.Info("Window restored from the notification area.");
+    }
+
+    private void DisposeTrayIcon()
+    {
+        if (trayIcon is null)
+        {
+            return;
+        }
+
+        trayIcon.Visible = false;
+        trayIcon.Dispose();
+        trayIcon = null;
+    }
+
+    private NotifyIcon CreateTrayIcon()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Open", null, (_, _) => RestoreFromTray());
+        menu.Items.Add("Exit", null, (_, _) => Close());
+
+        var icon = new NotifyIcon
+        {
+            Icon = CreateTrayIconImage(),
+            Text = "Simple Audio Recorder",
+            ContextMenuStrip = menu,
+            Visible = false,
+        };
+        icon.DoubleClick += (_, _) => RestoreFromTray();
+        return icon;
+    }
+
+    private static Icon CreateTrayIconImage()
+    {
+        // Small application icon drawn in code so no asset file is needed:
+        // purple disc with the red record dot, matching the main button.
+        using var bitmap = new Bitmap(16, 16);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var disc = new SolidBrush(Color.FromArgb(101, 77, 245));
+            using var dot = new SolidBrush(Color.FromArgb(255, 98, 129));
+            graphics.FillEllipse(disc, 1, 1, 14, 14);
+            graphics.FillEllipse(dot, 5, 5, 6, 6);
+        }
+
+        return Icon.FromHandle(bitmap.GetHicon());
     }
 
     private void HandleDragMouseDown(object? sender, MouseEventArgs e)
@@ -776,6 +872,64 @@ public sealed class MainForm : Form
         path.AddArc(rect.X, rect.Bottom - diameter, diameter, diameter, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    private enum WindowControlButtonKind
+    {
+        Minimize,
+        Close,
+    }
+
+    private sealed class WindowControlButton : Control
+    {
+        private readonly WindowControlButtonKind kind;
+        private bool hovered;
+
+        public WindowControlButton(WindowControlButtonKind kind)
+        {
+            this.kind = kind;
+            Size = new Size(22, 16);
+            Cursor = Cursors.Hand;
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            ForeColor = Color.FromArgb(150, 158, 198);
+            BackColor = Color.Transparent;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var color = kind == WindowControlButtonKind.Close
+                ? (hovered ? Color.FromArgb(255, 98, 129) : ForeColor)
+                : (hovered ? Color.FromArgb(210, 216, 240) : ForeColor);
+
+            var caption = kind == WindowControlButtonKind.Close ? "\u2715" : "\u2013";
+            TextRenderer.DrawText(
+                e.Graphics,
+                caption,
+                Font,
+                ClientRectangle,
+                color,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
     }
 
     private sealed class StatusBadgeControl : Control
