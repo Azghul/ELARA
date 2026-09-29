@@ -229,10 +229,78 @@ public sealed class AudioCaptureService : IDisposable
         catch (Exception ex)
         {
             AppLogger.Error("Recording startup failed.", ex);
-            CleanupCaptureSources();
-            CleanupTempFiles();
-            throw;
+            throw AbortStartup(ex);
         }
+    }
+
+    private Exception AbortStartup(Exception startupError)
+    {
+        // Stop every already-started source as well as possible, but never dispose a
+        // worker that may still be running: its synchronization objects must stay alive.
+        var anyWorkerMayStillRun = false;
+
+        foreach (var source in new[] { microphoneSource, systemSource })
+        {
+            if (source is null)
+            {
+                continue;
+            }
+
+            var stoppedSafely = false;
+            try
+            {
+                source.Stop();
+                stoppedSafely = true;
+            }
+            catch (TimeoutException stopEx)
+            {
+                anyWorkerMayStillRun = true;
+                AppLogger.Error(
+                    "A capture source did not stop safely during startup abort (worker thread may still be running); it will not be disposed.",
+                    stopEx);
+            }
+            catch (Exception stopEx)
+            {
+                // The worker joined (for example a wrapped background exception); safe to dispose.
+                stoppedSafely = true;
+                AppLogger.Warn($"A capture source reported an error while stopping during startup abort. {stopEx.Message}");
+            }
+
+            if (stoppedSafely)
+            {
+                try
+                {
+                    source.Dispose();
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        microphoneSource = null;
+        systemSource = null;
+        ActiveMicrophoneDeviceId = null;
+        ActiveMicrophoneDeviceName = null;
+        ActiveSystemDeviceId = null;
+        ActiveSystemDeviceName = null;
+
+        // Raw-data safety: keep the temporary directory if any PCM data exists OR if a
+        // worker may still be running (it could still write PCM data).
+        var anyPcmData = HasPcmData(tempMicrophonePath) || HasPcmData(tempSystemPath);
+        if (anyPcmData || anyWorkerMayStillRun)
+        {
+            LogKeptRawAudio(anyPcmData
+                ? "Recording startup failed after audio was already captured."
+                : "Recording startup failed and a capture worker may still be running.");
+            return new InvalidOperationException(
+                $"The recording could not be started completely. Raw audio was kept at: {tempDirectory}",
+                startupError);
+        }
+
+        // No raw data exists and all workers terminated safely: normal cleanup is safe.
+        CleanupTempFiles();
+        return startupError;
     }
 
     private RecordingInfo StopCore()

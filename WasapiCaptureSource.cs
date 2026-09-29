@@ -116,8 +116,13 @@ internal sealed class WasapiCaptureSource : IDisposable
         {
         }
 
-        startSignal.Dispose();
-        stopSignal.Dispose();
+        // Never release the synchronization objects while the worker thread may
+        // still be running (stop timed out): the thread uses them on shutdown.
+        if (workerThread is null)
+        {
+            startSignal.Dispose();
+            stopSignal.Dispose();
+        }
     }
 
     private void CaptureThreadProc()
