@@ -97,6 +97,12 @@ internal static class AudioInputDeviceCatalog
         try
         {
             propertyStore = device.OpenPropertyStore(StorageAccessMode.Read);
+            if (propertyStore is null)
+            {
+                AppLogger.Warn("Could not open the property store of an audio device; falling back to its endpoint id.");
+                return device.GetId();
+            }
+
             var friendlyNameKey = FriendlyNameKey;
             propertyStore.GetValue(ref friendlyNameKey, out propVariant);
 
@@ -105,6 +111,13 @@ internal static class AudioInputDeviceCatalog
                 { Length: > 0 } name => name,
                 _ => device.GetId(),
             };
+        }
+        catch (Exception ex)
+        {
+            // Never fail device enumeration or capture startup just because the
+            // friendly name could not be read; the endpoint id is a safe fallback.
+            AppLogger.Warn($"Could not read the friendly name of an audio device; falling back to its endpoint id. {ex.Message}");
+            return device.GetId();
         }
         finally
         {
