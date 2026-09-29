@@ -404,11 +404,20 @@ public sealed class AudioCaptureService : IDisposable
 
             if (!RequiredPcmDataComplete())
             {
-                // Partial raw data exists (for example Both mode with an empty microphone
-                // track). Raw data must be preserved; never encode an incomplete recording.
-                LogKeptRawAudio("The recording is incomplete.");
-                throw new InvalidOperationException(
-                    $"The recording is incomplete. Available raw audio was kept at: {tempDirectory}");
+                // Both mode with a clean start/stop may legitimately contain one empty
+                // track (for example no system audio was playing); it is saved as silence.
+                if (AllowPartiallyEmptyBothTrack(stopErrors))
+                {
+                    AppLogger.Warn("One capture track contained no audio and was saved as silence.");
+                }
+                else
+                {
+                    // Partial raw data exists but cannot be saved. Raw data must be
+                    // preserved; never encode an incomplete recording.
+                    LogKeptRawAudio("The recording is incomplete.");
+                    throw new InvalidOperationException(
+                        $"The recording is incomplete. Available raw audio was kept at: {tempDirectory}");
+                }
             }
 
             // PHASE 4 + 5: produce the final file. Only a successfully written and validated
@@ -500,6 +509,18 @@ public sealed class AudioCaptureService : IDisposable
             CaptureMode.System => HasPcmData(tempSystemPath),
             _ => false,
         };
+    }
+
+    private bool AllowPartiallyEmptyBothTrack(List<Exception> stopErrors)
+    {
+        // Both mode: one empty track is legitimate silence as long as both capture
+        // sources stopped cleanly, both expected PCM files exist, and the other track
+        // contains data. A stop timeout can never reach this check (handled earlier).
+        return currentMode == CaptureMode.Both
+            && stopErrors.Count == 0
+            && File.Exists(tempMicrophonePath)
+            && File.Exists(tempSystemPath)
+            && (HasPcmData(tempMicrophonePath) || HasPcmData(tempSystemPath));
     }
 
     private void LogKeptRawAudio(string reason)
