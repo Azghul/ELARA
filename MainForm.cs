@@ -7,7 +7,8 @@ namespace SimpleAudioRecorder;
 
 public sealed class MainForm : Form
 {
-    private const string GitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
+    private const string GitHubUrl = "https://github.com/Azghul/SimpleAudioRecorder";
+    private const string UpstreamGitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
     private const float CardRadius = 18F;
 
     private readonly AudioCaptureService captureService = new();
@@ -15,6 +16,8 @@ public sealed class MainForm : Form
     private readonly ToolTip toolTip = new() { ShowAlways = true };
     private readonly ContextMenuStrip appMenu = new();
     private readonly ToolStripMenuItem microphoneMenuItem = new("Microphone");
+    private readonly ToolStripMenuItem systemAudioMenuItem = new("System Audio");
+    private readonly ToolStripMenuItem formatMenuItem = new("Format");
 
     private readonly Label timerLabel = new();
     private readonly LinkLabel modeLink = new();
@@ -25,6 +28,9 @@ public sealed class MainForm : Form
     private CaptureMode selectedMode = CaptureMode.Both;
     private string? selectedMicrophoneDeviceId;
     private string? selectedMicrophoneDeviceName;
+    private string? selectedPlaybackDeviceId;
+    private string? selectedPlaybackDeviceName;
+    private OutputFormat selectedFormat = OutputFormat.Mp3;
     private bool previewMode;
     private bool previewRecording;
 
@@ -47,6 +53,7 @@ public sealed class MainForm : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
 
         BuildLayout();
+        LoadSettings();
         BuildContextMenu();
         AttachContextMenu(this, appMenu);
         AttachDragBehavior(this);
@@ -177,14 +184,93 @@ public sealed class MainForm : Form
     private void BuildContextMenu()
     {
         microphoneMenuItem.DropDownOpening += (_, _) => RefreshMicrophoneMenu();
+        systemAudioMenuItem.DropDownOpening += (_, _) => RefreshSystemAudioMenu();
+        formatMenuItem.DropDownOpening += (_, _) => RefreshFormatMenu();
 
         appMenu.Items.Add("About App", null, (_, _) => ShowAboutDialog());
         appMenu.Items.Add("View Audio Files", null, (_, _) => OpenAudioFolder());
         appMenu.Items.Add(microphoneMenuItem);
+        appMenu.Items.Add(systemAudioMenuItem);
+        appMenu.Items.Add(formatMenuItem);
         appMenu.Items.Add(new ToolStripSeparator());
         appMenu.Items.Add("Exit", null, (_, _) => Close());
 
         RefreshMicrophoneMenu();
+        RefreshSystemAudioMenu();
+        RefreshFormatMenu();
+    }
+
+    private void LoadSettings()
+    {
+        var settings = AppSettings.Load();
+        selectedFormat = settings.ResolveOutputFormat();
+
+        try
+        {
+            var microphones = AudioInputDeviceCatalog.GetMicrophones();
+            if (string.IsNullOrWhiteSpace(settings.SelectedMicrophoneDeviceId))
+            {
+                selectedMicrophoneDeviceId = null;
+                selectedMicrophoneDeviceName = null;
+            }
+            else
+            {
+                var saved = microphones.FirstOrDefault(device =>
+                    string.Equals(device.Id, settings.SelectedMicrophoneDeviceId, StringComparison.Ordinal));
+                if (saved.Id is not null)
+                {
+                    selectedMicrophoneDeviceId = saved.Id;
+                    selectedMicrophoneDeviceName = saved.DisplayName;
+                }
+                else
+                {
+                    selectedMicrophoneDeviceId = null;
+                    selectedMicrophoneDeviceName = null;
+                    AppLogger.Warn(
+                        $"Saved microphone '{settings.SelectedMicrophoneDeviceId}' is no longer available; falling back to the Windows default.");
+                }
+            }
+
+            var playbackDevices = AudioInputDeviceCatalog.GetPlaybackDevices();
+            if (string.IsNullOrWhiteSpace(settings.SelectedPlaybackDeviceId))
+            {
+                selectedPlaybackDeviceId = null;
+                selectedPlaybackDeviceName = null;
+            }
+            else
+            {
+                var saved = playbackDevices.FirstOrDefault(device =>
+                    string.Equals(device.Id, settings.SelectedPlaybackDeviceId, StringComparison.Ordinal));
+                if (saved.Id is not null)
+                {
+                    selectedPlaybackDeviceId = saved.Id;
+                    selectedPlaybackDeviceName = saved.DisplayName;
+                }
+                else
+                {
+                    selectedPlaybackDeviceId = null;
+                    selectedPlaybackDeviceName = null;
+                    AppLogger.Warn(
+                        $"Saved playback device '{settings.SelectedPlaybackDeviceId}' is no longer available; falling back to the Windows default.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Device validation is best-effort; the normal start error handling covers
+            // machines without usable audio devices.
+            AppLogger.Warn($"Could not validate the saved devices at startup. {ex.Message}");
+        }
+    }
+
+    private void SaveSettings()
+    {
+        new AppSettings
+        {
+            SelectedMicrophoneDeviceId = selectedMicrophoneDeviceId,
+            SelectedPlaybackDeviceId = selectedPlaybackDeviceId,
+            Format = selectedFormat.ToString(),
+        }.Save();
     }
 
     private void LayoutCompactControls()
@@ -240,13 +326,16 @@ public sealed class MainForm : Form
         try
         {
             AppLogger.Info(
-                $"Start requested from UI. Mode={selectedMode}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]");
-            await captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId);
+                $"Start requested from UI. Mode={selectedMode}; Format={selectedFormat.ToDisplayName()}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]; SelectedPlayback={(selectedPlaybackDeviceName ?? "Windows default")} [{(selectedPlaybackDeviceId ?? "<default>")}]");
+            await captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId, selectedPlaybackDeviceId, selectedFormat);
             timerLabel.Text = "00:00";
             uiTimer.Start();
-            var recordingDetails = selectedMode is CaptureMode.System
-                ? $"{selectedMode.ToDisplayName()} capture is recording."
-                : $"{selectedMode.ToDisplayName()} capture is recording with {captureService.ActiveMicrophoneDeviceName ?? selectedMicrophoneDeviceName ?? "the Windows default microphone"}.";
+            var systemDeviceText = selectedMode is CaptureMode.System or CaptureMode.Both
+                ? captureService.ActiveSystemDeviceName ?? selectedPlaybackDeviceName ?? "the Windows default playback device"
+                : null;
+            var recordingDetails = systemDeviceText is null
+                ? $"{selectedMode.ToDisplayName()} capture is recording with {captureService.ActiveMicrophoneDeviceName ?? selectedMicrophoneDeviceName ?? "the Windows default microphone"}."
+                : $"{selectedMode.ToDisplayName()} capture is recording with {systemDeviceText}.";
             UpdateStatus("Recording", Color.FromArgb(255, 142, 168), recordingDetails);
         }
         catch (Exception ex)
@@ -264,7 +353,7 @@ public sealed class MainForm : Form
     private async Task StopRecordingAsync()
     {
         recordButton.Enabled = false;
-        UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the WAV file and cleaning up the recording session.");
+        UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the recording file and cleaning up the recording session.");
 
         try
         {
@@ -272,7 +361,34 @@ public sealed class MainForm : Form
             var info = await captureService.StopAsync();
             timerLabel.Text = "00:00";
             levelMeter.ResetMeter();
-            UpdateStatus("Saved", Color.FromArgb(110, 230, 182), $"Saved {Path.GetFileName(info.FilePath)}");
+
+            // The RecordingInfo always reflects the actually saved state.
+            var statusText = $"Saved {Path.GetFileName(info.FilePath)}";
+            var statusDetails = statusText;
+            if (info.WasRescuedToWav)
+            {
+                statusText = $"{statusText} (WAV)";
+                statusDetails = "MP3 encoding failed. The recording was rescued as a WAV file.";
+            }
+
+            if (info.HadCaptureStopErrors)
+            {
+                statusDetails = $"{statusDetails} A capture source stopped with an error, but the recording was saved.";
+            }
+
+            UpdateStatus("Saved", Color.FromArgb(110, 230, 182), statusDetails);
+
+            if (info.WasRescuedToWav || info.HadCaptureStopErrors)
+            {
+                MessageBox.Show(
+                    this,
+                    info.WasRescuedToWav
+                        ? $"MP3 encoding failed. The recording was saved as a WAV file instead:\n{info.FilePath}"
+                        : $"The recording was saved, but a capture source stopped with an error:\n{info.FilePath}",
+                    "Recording Saved",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
         }
         catch (Exception ex)
         {
@@ -293,6 +409,8 @@ public sealed class MainForm : Form
         recordButton.Enabled = previewMode || !captureService.IsRecording || recordButton.IsRecording;
         modeLink.Enabled = !IsVisualRecording();
         microphoneMenuItem.Enabled = !IsVisualRecording();
+        systemAudioMenuItem.Enabled = !IsVisualRecording();
+        formatMenuItem.Enabled = !IsVisualRecording();
         UpdateModeText();
     }
 
@@ -319,7 +437,10 @@ public sealed class MainForm : Form
     {
         modeLink.Text = selectedMode.ToDisplayName();
         var microphoneText = selectedMicrophoneDeviceName ?? "Windows default microphone";
-        toolTip.SetToolTip(modeLink, $"{selectedMode.ToDisplayName()} capture. Click to switch between Both, Mic, and System. Current microphone: {microphoneText}.");
+        var systemText = selectedPlaybackDeviceName ?? "Windows default playback device";
+        toolTip.SetToolTip(
+            modeLink,
+            $"{selectedMode.ToDisplayName()} capture. Click to switch between Both, Mic, and System. Current microphone: {microphoneText}. System audio: {systemText}. Output format: {selectedFormat.ToDisplayName()}.");
     }
 
     private void UpdateStatus(string? text, Color color, string? details)
@@ -413,6 +534,7 @@ public sealed class MainForm : Form
                 selectedMicrophoneDeviceId = null;
                 selectedMicrophoneDeviceName = null;
                 AppLogger.Info("Microphone selection reset to Windows default.");
+                SaveSettings();
                 UpdateModeText();
             }));
 
@@ -441,6 +563,7 @@ public sealed class MainForm : Form
                     selectedMicrophoneDeviceId = localMicrophone.Id;
                     selectedMicrophoneDeviceName = localMicrophone.DisplayName;
                     AppLogger.Info($"Microphone selection changed to {localMicrophone.DisplayName} [{localMicrophone.Id}]");
+                    SaveSettings();
                     UpdateModeText();
                 }));
         }
@@ -470,6 +593,127 @@ public sealed class MainForm : Form
         };
         item.Click += (_, _) => onClick();
         return item;
+    }
+
+    private void RefreshSystemAudioMenu()
+    {
+        systemAudioMenuItem.DropDownItems.Clear();
+
+        if (captureService.IsRecording || previewMode)
+        {
+            systemAudioMenuItem.Text = "System Audio";
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("Locked while recording") { Enabled = false });
+            return;
+        }
+
+        IReadOnlyList<AudioDeviceInfo> playbackDevices;
+        try
+        {
+            playbackDevices = AudioInputDeviceCatalog.GetPlaybackDevices();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Could not enumerate playback devices for the context menu.", ex);
+            systemAudioMenuItem.Text = "System Audio";
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("Could not load playback devices") { Enabled = false });
+            return;
+        }
+
+        var effectiveSelectionId = selectedPlaybackDeviceId;
+        var effectiveSelectionName = selectedPlaybackDeviceName;
+
+        if (string.IsNullOrWhiteSpace(effectiveSelectionId))
+        {
+            effectiveSelectionName = playbackDevices.FirstOrDefault(device => device.IsDefault).DisplayName;
+        }
+        else
+        {
+            var selectedDevice = playbackDevices.FirstOrDefault(device =>
+                string.Equals(device.Id, effectiveSelectionId, StringComparison.Ordinal));
+            if (selectedDevice != default)
+            {
+                effectiveSelectionName = selectedDevice.DisplayName;
+            }
+        }
+
+        systemAudioMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+            "Windows default",
+            isChecked: string.IsNullOrWhiteSpace(selectedPlaybackDeviceId),
+            onClick: () =>
+            {
+                selectedPlaybackDeviceId = null;
+                selectedPlaybackDeviceName = null;
+                AppLogger.Info("System audio selection reset to Windows default.");
+                SaveSettings();
+                UpdateModeText();
+            }));
+
+        if (playbackDevices.Count > 0)
+        {
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        var selectedDeviceMissing = !string.IsNullOrWhiteSpace(selectedPlaybackDeviceId)
+            && playbackDevices.All(device => !string.Equals(device.Id, selectedPlaybackDeviceId, StringComparison.Ordinal));
+
+        if (selectedDeviceMissing)
+        {
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("Selected playback device is unavailable") { Enabled = false });
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        foreach (var playbackDevice in playbackDevices)
+        {
+            var localDevice = playbackDevice;
+            systemAudioMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+                localDevice.MenuLabel,
+                isChecked: string.Equals(localDevice.Id, selectedPlaybackDeviceId, StringComparison.Ordinal),
+                onClick: () =>
+                {
+                    selectedPlaybackDeviceId = localDevice.Id;
+                    selectedPlaybackDeviceName = localDevice.DisplayName;
+                    AppLogger.Info($"System audio selection changed to {localDevice.DisplayName} [{localDevice.Id}]");
+                    SaveSettings();
+                    UpdateModeText();
+                }));
+        }
+
+        if (playbackDevices.Count == 0)
+        {
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("No active playback devices found") { Enabled = false });
+        }
+
+        var headerText = effectiveSelectionName is { Length: > 0 }
+            ? $"System Audio ({effectiveSelectionName})"
+            : "System Audio";
+        if (selectedDeviceMissing)
+        {
+            headerText = "System Audio (Unavailable)";
+        }
+
+        systemAudioMenuItem.Text = headerText;
+    }
+
+    private void RefreshFormatMenu()
+    {
+        formatMenuItem.DropDownItems.Clear();
+
+        foreach (var format in new[] { OutputFormat.Mp3, OutputFormat.Wav })
+        {
+            var localFormat = format;
+            formatMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+                localFormat.ToDisplayName(),
+                isChecked: localFormat == selectedFormat,
+                onClick: () =>
+                {
+                    selectedFormat = localFormat;
+                    AppLogger.Info($"Output format changed to {localFormat.ToDisplayName()}.");
+                    SaveSettings();
+                    UpdateModeText();
+                }));
+        }
+
+        formatMenuItem.Text = $"Format ({selectedFormat.ToDisplayName()})";
     }
 
     private void AttachContextMenu(Control root, ContextMenuStrip menu)
