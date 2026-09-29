@@ -1085,7 +1085,6 @@ public sealed class MainForm : Form
             Cursor = interactive ? Cursors.Hand : Cursors.Default;
             Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
             ForeColor = Color.FromArgb(235, 238, 248);
-            BackColor = Color.Transparent;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
                 | ControlStyles.OptimizedDoubleBuffer
@@ -1093,6 +1092,7 @@ public sealed class MainForm : Form
                 | ControlStyles.ResizeRedraw
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
+            BackColor = Color.Transparent;
         }
 
         protected override void OnMouseEnter(EventArgs e)
