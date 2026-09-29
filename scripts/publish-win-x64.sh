@@ -9,7 +9,7 @@ version="$(grep -oP '(?<=<Version>)[^<]+' "${repo_root}/SimpleAudioRecorder.cspr
 configuration="${CONFIGURATION:-Release}"
 output_dir="${repo_root}/artifacts"
 publish_dir="${output_dir}/publish-win-x64"
-zip_path="${output_dir}/SimpleAudioRecorder-${version}-win-x64.zip"
+zip_path="${output_dir}/ELARA-${version}-win-x64.zip"
 
 rm -rf "${publish_dir}"
 mkdir -p "${output_dir}"
@@ -19,6 +19,14 @@ dotnet publish "${repo_root}/SimpleAudioRecorder.csproj" \
     -r win-x64 \
     --self-contained \
     -o "${publish_dir}"
+
+# Release hygiene: no debug symbols and no 32-bit LAME library in the x64-only ZIP.
+rm -f "${publish_dir}"/*.pdb
+rm -f "${publish_dir}/libmp3lame.32.dll"
+
+# Include license files with the distribution.
+cp "${repo_root}/LICENSE" "${publish_dir}/LICENSE"
+cp "${repo_root}/THIRD_PARTY_NOTICES.md" "${publish_dir}/THIRD_PARTY_NOTICES.md"
 
 echo
 echo "=== Publish output (${publish_dir}) ==="
@@ -31,6 +39,8 @@ required_files=(
     "SimpleAudioRecorder.dll"
     "NAudio.Lame.dll"
     "NAudio.Core.dll"
+    "LICENSE"
+    "THIRD_PARTY_NOTICES.md"
 )
 missing=0
 for file in "${required_files[@]}"; do
@@ -53,6 +63,24 @@ else
     echo "MISSING libmp3lame.*.dll (native LAME encoder)"
     missing=1
 fi
+
+if [[ ! -f "${publish_dir}/libmp3lame.64.dll" ]]; then
+    echo "MISSING libmp3lame.64.dll (required for win-x64)"
+    missing=1
+fi
+
+forbidden_files=(
+    "SimpleAudioRecorder.pdb"
+    "libmp3lame.32.dll"
+)
+for file in "${forbidden_files[@]}"; do
+    if [[ -f "${publish_dir}/${file}" ]]; then
+        echo "FORBIDDEN PRESENT ${file}"
+        missing=1
+    else
+        echo "OK      ${file} absent"
+    fi
+done
 
 if [[ "${missing}" -ne 0 ]]; then
     echo

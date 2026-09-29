@@ -53,7 +53,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "Simple Audio Recorder";
+        Text = "ELARA";
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(432, 352);
         MinimumSize = Size;
@@ -103,7 +103,10 @@ public sealed class MainForm : Form
 
         var result = MessageBox.Show(
             this,
-            "A recording is still in progress. Stop and save it before closing?",
+            "A recording is still in progress.\n\n" +
+            "Yes — stop the recording now and save it.\n" +
+            "No — close ELARA. The app will still try to save the recording automatically.\n" +
+            "Cancel — keep recording.",
             "Stop Recording",
             MessageBoxButtons.YesNoCancel,
             MessageBoxIcon.Question);
@@ -178,7 +181,7 @@ public sealed class MainForm : Form
         titleHeader.Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
         titleHeader.ForeColor = Color.FromArgb(247, 248, 255);
         titleHeader.BackColor = Color.Transparent;
-        titleHeader.Text = "Simple Audio Recorder";
+        titleHeader.Text = "ELARA";
 
         timerLabel.AutoSize = false;
         timerLabel.Font = new Font("Cascadia Mono", 28F, FontStyle.Bold, GraphicsUnit.Point);
@@ -554,6 +557,7 @@ public sealed class MainForm : Form
         formatSelector.Enabled = !selectionLocked;
         outputPathSelector.Enabled = !selectionLocked;
         browseButton.Enabled = !selectionLocked;
+        optionsButton.Enabled = !selectionLocked;
         microphoneMenuItem.Enabled = !selectionLocked;
         systemAudioMenuItem.Enabled = !selectionLocked;
         formatMenuItem.Enabled = !selectionLocked;
@@ -982,7 +986,7 @@ public sealed class MainForm : Form
         var icon = new NotifyIcon
         {
             Icon = CreateTrayIconImage(),
-            Text = "Simple Audio Recorder",
+            Text = "ELARA",
             ContextMenuStrip = menu,
             Visible = false,
         };

@@ -1,46 +1,46 @@
-# SimpleAudioRecorder
+# ELARA
 
-Simple Audio Recorder is a Windows desktop executable for capturing:
+Easy Local Audio Recording App
 
-- `Both`: system audio on the left channel and microphone audio on the right channel
-- `Mic`: a selectable microphone only (mono)
-- `System`: a selectable playback device using WASAPI loopback (mono)
+A lightweight Windows desktop recorder for microphone and system audio.
 
-Output is saved as **MP3 (~160 kbit/s, 48 kHz)** or **PCM WAV** — selectable in the context menu. If MP3 encoding fails, the recording is automatically rescued as WAV.
+## Features
 
-Recordings are saved to `Documents\Simple Audio Recorder` and the app falls back to another writable local folder if Windows blocks that location.
+- Recording modes: `Both` (system audio left, microphone right), `Mic`, `System`
+- Selectable microphone (Windows default + all capture devices)
+- Selectable playback device captured via WASAPI loopback (Windows default + all playback devices)
+- Output formats: MP3 (~160 kbit/s) and PCM WAV
+- Both mode records stereo (left = system audio, right = microphone)
+- Visible device, mode and format selectors in the main window
+- Configurable recording location
+- System tray integration (hide to tray, restore, exit)
+- Persistent settings (devices, format, output location)
+- MP3-to-WAV rescue if MP3 encoding fails
+- Raw PCM data is preserved in critical failure cases
+- Self-contained win-x64 release (no .NET installation required on the target PC)
 
-The main window is intentionally compact:
+## Origins
 
-- Click the mode label (`Both`, `Mic`, or `System`) to cycle capture sources
-- Click the main button to start or stop recording
-- Right-click anywhere in the app for `About App`, `View Audio Files`, `Microphone`, `System Audio`, `Format`, and `Exit`
-- Use the `Microphone` submenu to choose a specific input device instead of the Windows default
-- Use the `System Audio` submenu to choose which playback device is captured via WASAPI loopback instead of the Windows default
-- Use the `Format` submenu to switch between `MP3` and `WAV`
-- `About App` includes `Open Log Files` for verbose diagnostic logs
+ELARA was originally based on SimpleAudioRecorder by SickPuppyCoding.
+The project has since diverged substantially through changes to the UI,
+device selection, output formats, configuration, tray integration,
+output handling and recording-safety behaviour.
 
-## Settings
+Original copyright/license notices remain preserved.
 
-Your last selections are remembered across restarts:
+- Current project: https://github.com/Azghul/SimpleAudioRecorder
+- Original project: https://github.com/SickPuppyCoding/SimpleAudioRecorder
 
-- selected microphone
-- selected playback (system audio) device
-- output format (MP3/WAV)
+## Status
 
-Settings are stored as JSON in the per-user app data folder (`...\SickPuppyCoding\SimpleAudioRecorder\settings.json`). If a saved device no longer exists at startup, the app falls back to the Windows default and logs a warning. If a device selected in the menu disappears before you start a recording, the recording is **not** started and an error is shown instead of silently switching devices.
+Version 0.8.0 — Pre-1.0 release
 
-## Data safety
+## Third-party libraries
 
-- Temporary raw PCM files are only deleted after the final MP3/WAV file was written successfully.
-- If MP3 encoding fails, the recording is automatically saved as WAV and the UI tells you so.
-- If saving fails completely, the raw audio is kept and its path is shown in the error message and written to the log.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for licenses of the bundled libraries
+and the native LAME encoder.
 
-## Logs
-
-The app writes verbose session logs to a per-user log folder. It prefers the normal Windows app-data location and falls back to another writable folder automatically if needed.
-
-## Build (Linux or Windows)
+## Build
 
 The project targets `net10.0-windows` and builds on Linux thanks to `EnableWindowsTargeting`:
 
@@ -56,14 +56,34 @@ Self-contained release (no .NET installation required on the target PC):
 ./scripts/publish-win-x64.sh
 ```
 
-This creates `artifacts/SimpleAudioRecorder-<version>-win-x64.zip` containing the EXE and all required DLLs (including the native LAME libraries). It also prints the publish output so the contained files can be verified.
+This creates `artifacts/ELARA-<version>-win-x64.zip` containing the EXE and all required
+DLLs (including the native LAME encoder and the license files). The script also prints
+the publish output so the contained files can be verified.
 
-## Third-party libraries and licenses
+## Logs
 
-| Component | License | Notes |
-|---|---|---|
-| [NAudio.Lame](https://www.nuget.org/packages/NAudio.Lame/) | MIT | MP3 encoder wrapper (Copyright (c) Corey Murtagh) |
-| [NAudio.Core](https://www.nuget.org/packages/NAudio.Core/) | MIT | Pulled in transitively by NAudio.Lame |
-| LAME `libmp3lame.64.dll` / `libmp3lame.32.dll` | LGPL | Unmodified native LAME encoder libraries bundled with NAudio.Lame; they are copied to the application folder by the package. Source: [lame.sourceforge.io](https://lame.sourceforge.io) |
+The app writes verbose session logs to a per-user log folder. It prefers the normal
+Windows app-data location and falls back to another writable folder automatically if needed.
 
-This project is maintained by [Azghul](https://github.com/Azghul/SimpleAudioRecorder) and is based on the original [SimpleAudioRecorder by SickPuppyCoding](https://github.com/SickPuppyCoding/SimpleAudioRecorder). The original MIT license and copyright notices are preserved in [LICENSE](LICENSE).
+## Settings
+
+Your last selections are remembered across restarts:
+
+- selected microphone
+- selected playback (system audio) device
+- output format (MP3/WAV)
+- recording output location
+
+Settings are stored as JSON in the per-user app data folder
+(`...\SickPuppyCoding\SimpleAudioRecorder\settings.json`). If a saved device or output
+folder no longer exists at startup, the app falls back to the Windows default location
+and logs a warning. If a device selected in the UI disappears before you start a
+recording, the recording is **not** started and an error is shown instead of silently
+switching devices.
+
+## Data safety
+
+- Temporary raw PCM files are only deleted after the final MP3/WAV file was written successfully.
+- If MP3 encoding fails, the recording is automatically saved as WAV and the UI tells you so.
+- If saving fails completely, the raw audio is kept and its path is shown in the error message and written to the log.
+- In Both mode a single silent track (for example no system audio playing) is saved as silence.
