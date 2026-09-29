@@ -29,10 +29,13 @@ public sealed class MainForm : Form
     private readonly Label micFieldLabel = CreateFieldLabel("Microphone");
     private readonly Label systemFieldLabel = CreateFieldLabel("System Audio");
     private readonly Label formatFieldLabel = CreateFieldLabel("Format");
+    private readonly Label outputFieldLabel = CreateFieldLabel("Save to");
     private readonly DarkSelector modeSelector = new();
     private readonly DarkSelector micSelector = new();
     private readonly DarkSelector systemSelector = new();
     private readonly DarkSelector formatSelector = new();
+    private readonly DarkSelector outputPathSelector = new(interactive: false);
+    private readonly FolderBrowseButton browseButton = new();
     private readonly LinkLabel openLink = new();
     private readonly StatusBadgeControl statusBadge = new();
     private readonly DotMeterControl levelMeter = new();
@@ -51,7 +54,7 @@ public sealed class MainForm : Form
     {
         Text = "Simple Audio Recorder";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(432, 322);
+        ClientSize = new Size(432, 352);
         MinimumSize = Size;
         MaximumSize = Size;
         FormBorderStyle = FormBorderStyle.None;
@@ -207,6 +210,7 @@ public sealed class MainForm : Form
         micSelector.Click += (_, _) => OpenSelectorDropdown(micSelector, microphoneMenuItem.DropDown, RefreshMicrophoneMenu);
         systemSelector.Click += (_, _) => OpenSelectorDropdown(systemSelector, systemAudioMenuItem.DropDown, RefreshSystemAudioMenu);
         formatSelector.Click += (_, _) => OpenSelectorDropdown(formatSelector, formatMenuItem.DropDown, RefreshFormatMenu);
+        browseButton.Click += (_, _) => BrowseForOutputFolder();
 
         Controls.Add(titleHeader);
         Controls.Add(timerLabel);
@@ -216,10 +220,13 @@ public sealed class MainForm : Form
         Controls.Add(micFieldLabel);
         Controls.Add(systemFieldLabel);
         Controls.Add(formatFieldLabel);
+        Controls.Add(outputFieldLabel);
         Controls.Add(modeSelector);
         Controls.Add(micSelector);
         Controls.Add(systemSelector);
         Controls.Add(formatSelector);
+        Controls.Add(outputPathSelector);
+        Controls.Add(browseButton);
         Controls.Add(recordButton);
         Controls.Add(openLink);
         Controls.Add(minimizeButton);
@@ -295,6 +302,25 @@ public sealed class MainForm : Form
         var settings = AppSettings.Load();
         selectedFormat = settings.ResolveOutputFormat();
 
+        if (string.IsNullOrWhiteSpace(settings.CustomOutputDirectory))
+        {
+            captureService.CustomOutputDirectory = null;
+        }
+        else
+        {
+            try
+            {
+                Directory.CreateDirectory(settings.CustomOutputDirectory);
+                captureService.CustomOutputDirectory = settings.CustomOutputDirectory;
+            }
+            catch (Exception ex)
+            {
+                captureService.CustomOutputDirectory = null;
+                AppLogger.Warn(
+                    $"Saved output directory '{settings.CustomOutputDirectory}' could not be created; falling back to the default recording directory. {ex.Message}");
+            }
+        }
+
         try
         {
             var microphones = AudioInputDeviceCatalog.GetMicrophones();
@@ -360,6 +386,7 @@ public sealed class MainForm : Form
             SelectedMicrophoneDeviceId = selectedMicrophoneDeviceId,
             SelectedPlaybackDeviceId = selectedPlaybackDeviceId,
             Format = selectedFormat.ToString(),
+            CustomOutputDirectory = captureService.CustomOutputDirectory,
         }.Save();
     }
 
@@ -388,7 +415,12 @@ public sealed class MainForm : Form
             rowTop += 34;
         }
 
-        recordButton.Location = new Point(32, 248);
+        var outputRowTop = rowTop;
+        outputPathSelector.SetBounds(selectorLeft, outputRowTop, selectorWidth - 42, 26);
+        browseButton.Location = new Point(selectorLeft + selectorWidth - 36, outputRowTop);
+        outputFieldLabel.Location = new Point(22, outputRowTop + 5);
+
+        recordButton.Location = new Point(32, outputRowTop + 40);
         recordButton.Width = ClientSize.Width - 64;
 
         openLink.Location = new Point((ClientSize.Width - openLink.PreferredWidth) / 2, ClientSize.Height - 24);
@@ -515,6 +547,8 @@ public sealed class MainForm : Form
         micSelector.Enabled = !selectionLocked;
         systemSelector.Enabled = !selectionLocked;
         formatSelector.Enabled = !selectionLocked;
+        outputPathSelector.Enabled = !selectionLocked;
+        browseButton.Enabled = !selectionLocked;
         microphoneMenuItem.Enabled = !selectionLocked;
         systemAudioMenuItem.Enabled = !selectionLocked;
         formatMenuItem.Enabled = !selectionLocked;
@@ -534,6 +568,10 @@ public sealed class MainForm : Form
         toolTip.SetToolTip(micSelector, $"Microphone: {micSelector.Text}");
         toolTip.SetToolTip(systemSelector, $"System audio: {systemSelector.Text}");
         toolTip.SetToolTip(formatSelector, $"Output format: {selectedFormat.ToDisplayName()}");
+        var outputDirectory = captureService.CustomOutputDirectory ?? AppPaths.RecordingDirectory;
+        outputPathSelector.Text = outputDirectory;
+        toolTip.SetToolTip(outputPathSelector, $"Recordings are saved to: {outputDirectory}");
+        toolTip.SetToolTip(browseButton, "Choose the folder where recordings are saved.");
     }
 
     private void UpdateStatus(string? text, Color color, string? details)
@@ -809,6 +847,37 @@ public sealed class MainForm : Form
         formatMenuItem.Text = $"Format ({selectedFormat.ToDisplayName()})";
     }
 
+    private void BrowseForOutputFolder()
+    {
+        if (IsVisualRecording())
+        {
+            return;
+        }
+
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Choose the folder where new recordings are saved.",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true,
+        };
+
+        var current = captureService.CustomOutputDirectory;
+        if (!string.IsNullOrWhiteSpace(current) && Directory.Exists(current))
+        {
+            dialog.SelectedPath = current;
+        }
+
+        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.SelectedPath))
+        {
+            return;
+        }
+
+        captureService.CustomOutputDirectory = dialog.SelectedPath;
+        SaveSettings();
+        AppLogger.Info($"Recording output directory changed to: {dialog.SelectedPath}");
+        UpdateModeText();
+    }
+
     private void AttachContextMenu(Control root, ContextMenuStrip menu)
     {
         root.ContextMenuStrip = menu;
@@ -824,7 +893,8 @@ public sealed class MainForm : Form
         if (control == recordButton || control == minimizeButton || control == closeButton
             || control == openLink
             || control == modeSelector || control == micSelector
-            || control == systemSelector || control == formatSelector)
+            || control == systemSelector || control == formatSelector
+            || control == outputPathSelector || control == browseButton)
         {
             return;
         }
@@ -1005,12 +1075,14 @@ public sealed class MainForm : Form
 
     private sealed class DarkSelector : Control
     {
+        private readonly bool interactive;
         private bool hovered;
 
-        public DarkSelector()
+        public DarkSelector(bool interactive = true)
         {
+            this.interactive = interactive;
             Size = new Size(284, 26);
-            Cursor = Cursors.Hand;
+            Cursor = interactive ? Cursors.Hand : Cursors.Default;
             Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
             ForeColor = Color.FromArgb(235, 238, 248);
             BackColor = Color.Transparent;
@@ -1074,13 +1146,74 @@ public sealed class MainForm : Form
 
             var chevronColor = Enabled ? Color.FromArgb(150, 136, 255) : Color.FromArgb(90, 96, 128);
             var chevronRect = new Rectangle(Width - 26, 0, 18, Height);
-            TextRenderer.DrawText(
-                e.Graphics,
-                "\u25BE",
-                Font,
-                chevronRect,
-                chevronColor,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+            if (interactive)
+            {
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    "\u25BE",
+                    Font,
+                    chevronRect,
+                    chevronColor,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+            }
+        }
+    }
+
+    private sealed class FolderBrowseButton : Control
+    {
+        private bool hovered;
+
+        public FolderBrowseButton()
+        {
+            Size = new Size(36, 26);
+            Cursor = Cursors.Hand;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            using var path = CreateRoundedRectangle(ClientRectangle, 8F);
+            using var fill = new SolidBrush(Enabled && hovered ? Color.FromArgb(31, 37, 68) : Color.FromArgb(24, 29, 56));
+            using var border = new Pen(Enabled
+                ? (hovered ? Color.FromArgb(122, 99, 255) : Color.FromArgb(49, 57, 96))
+                : Color.FromArgb(38, 44, 74));
+
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+
+            var color = Enabled ? Color.FromArgb(150, 158, 198) : Color.FromArgb(90, 96, 128);
+            using var brush = new SolidBrush(color);
+            // Simple folder glyph: back tab + body.
+            e.Graphics.FillRectangle(brush, 10, 8, 8, 3);
+            e.Graphics.FillRectangle(brush, 10, 10, 16, 9);
         }
     }
 

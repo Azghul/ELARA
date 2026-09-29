@@ -89,7 +89,30 @@ public sealed class AudioCaptureService : IDisposable
 
     public TimeSpan Elapsed => stopwatch.Elapsed;
 
-    public string OutputDirectory { get; } = AppPaths.RecordingDirectory;
+    public string? CustomOutputDirectory { get; set; }
+
+    public string OutputDirectory => ResolveOutputDirectory();
+
+    private string ResolveOutputDirectory()
+    {
+        var custom = CustomOutputDirectory;
+        if (string.IsNullOrWhiteSpace(custom))
+        {
+            return AppPaths.RecordingDirectory;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(custom);
+            return custom;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn(
+                $"Custom output directory '{custom}' is not usable; falling back to the default recording directory. {ex.Message}");
+            return AppPaths.RecordingDirectory;
+        }
+    }
 
     public string LogDirectory => AppLogger.LogDirectory;
 

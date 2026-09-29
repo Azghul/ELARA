@@ -11,6 +11,8 @@ internal sealed class AppSettings
 
     public string? SelectedPlaybackDeviceId { get; set; }
 
+    public string? CustomOutputDirectory { get; set; }
+
     [JsonPropertyName("OutputFormat")]
     public string Format { get; set; } = nameof(OutputFormat.Mp3);
 
