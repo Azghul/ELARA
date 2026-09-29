@@ -2,13 +2,13 @@ namespace SimpleAudioRecorder;
 
 internal static class WavUtility
 {
-    private static readonly GainProfile SystemGainProfile = new(
+    internal static readonly GainProfile SystemGainProfile = new(
         TargetPeakLevel: 0.92F,
         TargetActiveRms: 0.18F,
         MaximumGain: 3.0F,
         ActivityThreshold: 0.015F);
 
-    private static readonly GainProfile MicrophoneGainProfile = new(
+    internal static readonly GainProfile MicrophoneGainProfile = new(
         TargetPeakLevel: 0.96F,
         TargetActiveRms: 0.24F,
         MaximumGain: 8.0F,
@@ -78,7 +78,7 @@ internal static class WavUtility
             $"Stereo WAV written. File={wavPath}; LeftGain={leftGain:0.00}x; RightGain={rightGain:0.00}x; LeftPeak={leftAnalysis.PeakNormalized:0.000}; RightPeak={rightAnalysis.PeakNormalized:0.000}; LeftActiveRms={leftAnalysis.ActiveRmsNormalized:0.000}; RightActiveRms={rightAnalysis.ActiveRmsNormalized:0.000}");
     }
 
-    private static PcmAnalysis AnalyzePcm(string pcmPath, GainProfile gainProfile)
+    internal static PcmAnalysis AnalyzePcm(string pcmPath, GainProfile gainProfile)
     {
         using var reader = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
 
@@ -115,7 +115,7 @@ internal static class WavUtility
         return new PcmAnalysis(peakNormalized, activeRmsNormalized, activeSampleCount);
     }
 
-    private static float CalculateGain(PcmAnalysis analysis, GainProfile gainProfile)
+    internal static float CalculateGain(PcmAnalysis analysis, GainProfile gainProfile)
     {
         if (analysis.PeakNormalized <= 0F)
         {
@@ -131,7 +131,7 @@ internal static class WavUtility
         return Math.Clamp(desiredGain, 1F, gainProfile.MaximumGain);
     }
 
-    private static short ApplyGain(short sample, float gain)
+    internal static short ApplyGain(short sample, float gain)
     {
         if (gain <= 1.001F)
         {
@@ -190,13 +190,13 @@ internal static class WavUtility
         writer.Flush();
     }
 
-    private readonly record struct GainProfile(
+    internal readonly record struct GainProfile(
         float TargetPeakLevel,
         float TargetActiveRms,
         float MaximumGain,
         float ActivityThreshold);
 
-    private readonly record struct PcmAnalysis(
+    internal readonly record struct PcmAnalysis(
         float PeakNormalized,
         float ActiveRmsNormalized,
         long ActiveSampleCount);
