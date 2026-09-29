@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace SimpleAudioRecorder;
 
@@ -10,11 +11,12 @@ internal sealed class AppSettings
 
     public string? SelectedPlaybackDeviceId { get; set; }
 
-    public string OutputFormat { get; set; } = nameof(OutputFormat.Mp3);
+    [JsonPropertyName("OutputFormat")]
+    public string Format { get; set; } = nameof(OutputFormat.Mp3);
 
     public OutputFormat ResolveOutputFormat()
     {
-        return Enum.TryParse<OutputFormat>(OutputFormat, ignoreCase: true, out var format)
+        return Enum.TryParse<OutputFormat>(Format, ignoreCase: true, out var format)
             ? format
             : OutputFormat.Mp3;
     }
