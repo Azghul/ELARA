@@ -32,6 +32,7 @@ cp "${repo_root}/LICENSE-NAudio.Core.txt" "${publish_dir}/LICENSE-NAudio.Core.tx
 cp "${repo_root}/LICENSE-NAudio.Lame.txt" "${publish_dir}/LICENSE-NAudio.Lame.txt"
 cp "${repo_root}/LICENSE-NETRuntime.txt" "${publish_dir}/LICENSE-NETRuntime.txt"
 cp "${repo_root}/LICENSE-NETRuntime-ThirdPartyNotices.txt" "${publish_dir}/LICENSE-NETRuntime-ThirdPartyNotices.txt"
+cp "${repo_root}/LICENSE-DOTNET-LIBRARY.txt" "${publish_dir}/LICENSE-DOTNET-LIBRARY.txt"
 
 echo
 echo "=== Publish output (${publish_dir}) ==="
@@ -51,6 +52,7 @@ required_files=(
     "LICENSE-LAME.txt"
     "LICENSE-NETRuntime.txt"
     "LICENSE-NETRuntime-ThirdPartyNotices.txt"
+    "LICENSE-DOTNET-LIBRARY.txt"
 )
 missing=0
 for file in "${required_files[@]}"; do

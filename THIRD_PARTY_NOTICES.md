@@ -37,18 +37,32 @@ NuGet packages / bundled binaries and were not modified.
 - Project / source for exactly this version (LAME 3.100):
   https://sourceforge.net/projects/lame/files/lame/3.100/
 
-## .NET 10 Runtime (self-contained deployment)
+## .NET 10 Runtime (self-contained deployment — Windows)
 
-- Files: the self-contained win-x64 deployment includes the .NET runtime from
-  **Microsoft.NETCore.App.Runtime.win-x64 (10.0.12)** and
-  **Microsoft.WindowsDesktop.App.Runtime.win-x64 (10.0.12)**.
-- License: MIT — full text shipped in this distribution as
+The self-contained win-x64 deployment includes the .NET runtime from
+**Microsoft.NETCore.App.Runtime.win-x64 (10.0.12)** and
+**Microsoft.WindowsDesktop.App.Runtime.win-x64 (10.0.12)**. Per Microsoft's
+official Windows license information
+([license-information-windows.md](https://github.com/dotnet/core/blob/main/license-information-windows.md)),
+this Windows distribution contains components under **multiple Microsoft license terms**:
+
+- **MIT** — most runtime components and files.
+  Full text shipped in this distribution as
   [LICENSE-NETRuntime.txt](LICENSE-NETRuntime.txt)
-  (Copyright (c) .NET Foundation and Contributors)
-- Third-party notices of the .NET runtime are shipped in this distribution as
-  [LICENSE-NETRuntime-ThirdPartyNotices.txt](LICENSE-NETRuntime-ThirdPartyNotices.txt)
-  (copied unmodified from the Microsoft.NETCore.App.Runtime.win-x64 10.0.12 package).
-- Source: https://github.com/dotnet/runtime
+  (Copyright (c) .NET Foundation and Contributors). The complete third-party
+  notices of the .NET runtime are shipped as
+  [LICENSE-NETRuntime-ThirdPartyNotices.txt](LICENSE-NETRuntime-ThirdPartyNotices.txt).
+- **Microsoft .NET Library License** — the following binaries included in this
+  distribution: `coreclr.dll` and `Microsoft.DiaSymReader.Native.amd64.dll`.
+  Full official license text shipped in this distribution as
+  [LICENSE-DOTNET-LIBRARY.txt](LICENSE-DOTNET-LIBRARY.txt)
+  (verbatim from https://dotnet.microsoft.com/dotnet_library_license.htm).
+
+WPF-related binaries covered by the .NET Library License or the Windows SDK
+License (`PresentationNative_cor3.dll`, `vcruntime140_cor3.dll`, `wpfgfx_cor3.dll`,
+`D3DCompiler_47_cor3.dll`) are **not** part of this distribution.
+
+- Runtime source: https://github.com/dotnet/runtime
 
 ## ELARA
 
