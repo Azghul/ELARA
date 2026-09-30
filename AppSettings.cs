@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal sealed class AppSettings
 {
@@ -12,6 +12,8 @@ internal sealed class AppSettings
     public string? SelectedPlaybackDeviceId { get; set; }
 
     public string? CustomOutputDirectory { get; set; }
+
+    public bool AcceptedDotNetLibraryLicense { get; set; }
 
     [JsonPropertyName("OutputFormat")]
     public string Format { get; set; } = nameof(OutputFormat.Mp3);
@@ -25,6 +27,8 @@ internal sealed class AppSettings
 
     public static AppSettings Load()
     {
+        MigrateLegacySettingsIfNeeded();
+
         lock (SyncRoot)
         {
             try
@@ -43,6 +47,29 @@ internal sealed class AppSettings
                 AppLogger.Warn($"Could not read the settings file; using defaults. {ex.Message}");
                 return new AppSettings();
             }
+        }
+    }
+
+    private static void MigrateLegacySettingsIfNeeded()
+    {
+        // One-time migration from ELARA 0.8.0 (then branded Simple Audio Recorder).
+        // The legacy file is never deleted or modified; failures are non-fatal.
+        try
+        {
+            var newPath = AppPaths.SettingsFilePath;
+            var legacyPath = AppPaths.LegacySettingsFilePath;
+            if (File.Exists(newPath) || !File.Exists(legacyPath))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(AppPaths.SettingsDirectory);
+            File.Copy(legacyPath, newPath);
+            AppLogger.Info("Migrated legacy 0.8.0 settings to the new ELARA settings location.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"Could not migrate legacy settings; continuing without migration. {ex.Message}");
         }
     }
 

@@ -1,4 +1,4 @@
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal readonly record struct AudioDeviceInfo(string Id, string DisplayName, bool IsDefault)
 {

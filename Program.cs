@@ -1,4 +1,4 @@
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal static class Program
 {
@@ -35,6 +35,24 @@ internal static class Program
             {
                 AppLogger.Info("Launching UI preview renderer.");
                 return UiPreviewRunner.Run(args);
+            }
+
+            // First-run acceptance of the Microsoft .NET Library License, which covers
+            // components of the self-contained Windows distribution (e.g. coreclr.dll).
+            var settings = AppSettings.Load();
+            if (!settings.AcceptedDotNetLibraryLicense)
+            {
+                AppLogger.Info("Microsoft .NET Library License acceptance required.");
+                using var licenseDialog = new DotNetLicenseDialog();
+                if (licenseDialog.ShowDialog() != DialogResult.OK)
+                {
+                    AppLogger.Info("Microsoft .NET Library License not accepted; exiting.");
+                    return 1;
+                }
+
+                settings.AcceptedDotNetLibraryLicense = true;
+                settings.Save();
+                AppLogger.Info("Microsoft .NET Library License accepted.");
             }
 
             Application.Run(new MainForm());

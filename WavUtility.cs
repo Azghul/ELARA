@@ -1,4 +1,4 @@
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal static class WavUtility
 {

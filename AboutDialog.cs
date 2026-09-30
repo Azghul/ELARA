@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal sealed class AboutDialog : Form
 {
@@ -58,7 +58,7 @@ internal sealed class AboutDialog : Form
 
         var licenseNotice = new Label
         {
-            Text = "Uses NAudio (MIT), NAudio.Lame (MIT) and LAME libmp3lame (LGPL). See README.",
+            Text = "Uses NAudio (MIT), NAudio.Lame (MIT) and LAME libmp3lame (GNU Library GPL v2). See README.",
             AutoSize = true,
             ForeColor = Color.FromArgb(150, 158, 198),
             Location = new Point(24, 162),

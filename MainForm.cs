@@ -3,11 +3,11 @@ using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.ComponentModel;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 public sealed class MainForm : Form
 {
-    private const string GitHubUrl = "https://github.com/Azghul/SimpleAudioRecorder";
+    private const string GitHubUrl = "https://github.com/Azghul/ELARA";
     private const string UpstreamGitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
     private const float CardRadius = 18F;
 
@@ -50,6 +50,7 @@ public sealed class MainForm : Form
     private OutputFormat selectedFormat = OutputFormat.Mp3;
     private bool previewMode;
     private bool previewRecording;
+    private bool recordingOperationInProgress;
 
     public MainForm()
     {
@@ -86,6 +87,20 @@ public sealed class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // Never dispose the capture service while a start/stop/save operation is
+        // still running; the close is simply retried by the user afterwards.
+        if (recordingOperationInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                this,
+                "ELARA is currently starting or saving a recording. Please try again in a moment.",
+                "Please Wait",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
         if (!captureService.IsRecording)
         {
             DisposeTrayIcon();
@@ -117,29 +132,36 @@ public sealed class MainForm : Form
             return;
         }
 
-        if (result == DialogResult.No)
-        {
-            DisposeTrayIcon();
-            captureService.Dispose();
-            base.OnFormClosing(e);
-            return;
-        }
+        // Both Yes and No explicitly perform the announced save attempt; if saving
+        // fails, the user must see the error (including the preserved raw-audio path)
+        // before ELARA exits. AudioCaptureService keeps the raw PCM in that case.
+        TryStopAndSaveRecordingBeforeClose();
 
+        DisposeTrayIcon();
+        captureService.Dispose();
+        base.OnFormClosing(e);
+    }
+
+    private bool TryStopAndSaveRecordingBeforeClose()
+    {
         try
         {
-            captureService.StopAsync().GetAwaiter().GetResult();
+            // Run off the UI thread so encoding does not freeze the window while the
+            // close sequence waits for the result.
+            Task.Run(() => captureService.StopAsync()).GetAwaiter().GetResult();
+            return true;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Recording Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            AppLogger.Error("Recording could not be saved during application close.", ex);
+            MessageBox.Show(
+                this,
+                ex.Message,
+                "Recording Error",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+            return false;
         }
-        finally
-        {
-            captureService.Dispose();
-        }
-
-        DisposeTrayIcon();
-        base.OnFormClosing(e);
     }
 
     protected override void OnSizeChanged(EventArgs e)
@@ -464,12 +486,15 @@ public sealed class MainForm : Form
     {
         recordButton.Enabled = false;
         UpdateStatus("Preparing", Color.FromArgb(255, 211, 122), "Opening the Windows audio devices and preparing the recording file.");
+        recordingOperationInProgress = true;
 
         try
         {
             AppLogger.Info(
                 $"Start requested from UI. Mode={selectedMode}; Format={selectedFormat.ToDisplayName()}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]; SelectedPlayback={(selectedPlaybackDeviceName ?? "Windows default")} [{(selectedPlaybackDeviceId ?? "<default>")}]");
-            await captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId, selectedPlaybackDeviceId, selectedFormat);
+            // Device enumeration and COM initialization can block for several seconds;
+            // keep them off the UI thread so the window stays responsive.
+            await Task.Run(() => captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId, selectedPlaybackDeviceId, selectedFormat));
             timerLabel.Text = "00:00";
             uiTimer.Start();
             var systemDeviceText = selectedMode is CaptureMode.System or CaptureMode.Both
@@ -488,6 +513,7 @@ public sealed class MainForm : Form
         }
         finally
         {
+            recordingOperationInProgress = false;
             ApplyVisualState();
         }
     }
@@ -496,11 +522,14 @@ public sealed class MainForm : Form
     {
         recordButton.Enabled = false;
         UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the recording file and cleaning up the recording session.");
+        recordingOperationInProgress = true;
 
         try
         {
             AppLogger.Info("Stop requested from UI.");
-            var info = await captureService.StopAsync();
+            // Stopping, gain analysis and MP3/WAV encoding can take a while for long
+            // recordings; keep them off the UI thread so the window stays responsive.
+            var info = await Task.Run(() => captureService.StopAsync());
             timerLabel.Text = "00:00";
             levelMeter.ResetMeter();
 
@@ -541,6 +570,7 @@ public sealed class MainForm : Form
         finally
         {
             uiTimer.Stop();
+            recordingOperationInProgress = false;
             ApplyVisualState();
         }
     }

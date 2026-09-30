@@ -5,7 +5,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-version="$(grep -oP '(?<=<Version>)[^<]+' "${repo_root}/SimpleAudioRecorder.csproj" | head -1)"
+version="$(grep -oP '(?<=<Version>)[^<]+' "${repo_root}/ELARA.csproj" | head -1)"
 configuration="${CONFIGURATION:-Release}"
 output_dir="${repo_root}/artifacts"
 publish_dir="${output_dir}/publish-win-x64"
@@ -14,7 +14,7 @@ zip_path="${output_dir}/ELARA-${version}-win-x64.zip"
 rm -rf "${publish_dir}"
 mkdir -p "${output_dir}"
 
-dotnet publish "${repo_root}/SimpleAudioRecorder.csproj" \
+dotnet publish "${repo_root}/ELARA.csproj" \
     -c "${configuration}" \
     -r win-x64 \
     --self-contained \
@@ -28,6 +28,11 @@ rm -f "${publish_dir}/libmp3lame.32.dll"
 cp "${repo_root}/LICENSE" "${publish_dir}/LICENSE"
 cp "${repo_root}/THIRD_PARTY_NOTICES.md" "${publish_dir}/THIRD_PARTY_NOTICES.md"
 cp "${repo_root}/LICENSE-LAME.txt" "${publish_dir}/LICENSE-LAME.txt"
+cp "${repo_root}/LICENSE-NAudio.Core.txt" "${publish_dir}/LICENSE-NAudio.Core.txt"
+cp "${repo_root}/LICENSE-NAudio.Lame.txt" "${publish_dir}/LICENSE-NAudio.Lame.txt"
+cp "${repo_root}/LICENSE-NETRuntime.txt" "${publish_dir}/LICENSE-NETRuntime.txt"
+cp "${repo_root}/LICENSE-NETRuntime-ThirdPartyNotices.txt" "${publish_dir}/LICENSE-NETRuntime-ThirdPartyNotices.txt"
+cp "${repo_root}/LICENSE-DOTNET-LIBRARY.txt" "${publish_dir}/LICENSE-DOTNET-LIBRARY.txt"
 
 echo
 echo "=== Publish output (${publish_dir}) ==="
@@ -36,13 +41,18 @@ ls -la "${publish_dir}"
 echo
 echo "=== Required files check ==="
 required_files=(
-    "SimpleAudioRecorder.exe"
-    "SimpleAudioRecorder.dll"
+    "ELARA.exe"
+    "ELARA.dll"
+    "LICENSE-NAudio.Core.txt"
+    "LICENSE-NAudio.Lame.txt"
     "NAudio.Lame.dll"
     "NAudio.Core.dll"
     "LICENSE"
     "THIRD_PARTY_NOTICES.md"
     "LICENSE-LAME.txt"
+    "LICENSE-NETRuntime.txt"
+    "LICENSE-NETRuntime-ThirdPartyNotices.txt"
+    "LICENSE-DOTNET-LIBRARY.txt"
 )
 missing=0
 for file in "${required_files[@]}"; do
@@ -72,7 +82,7 @@ if [[ ! -f "${publish_dir}/libmp3lame.64.dll" ]]; then
 fi
 
 forbidden_files=(
-    "SimpleAudioRecorder.pdb"
+    "ELARA.pdb"
     "libmp3lame.32.dll"
 )
 for file in "${forbidden_files[@]}"; do

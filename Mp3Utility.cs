@@ -1,7 +1,7 @@
 using NAudio.Lame;
 using NAudio.Wave;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal static class Mp3Utility
 {
