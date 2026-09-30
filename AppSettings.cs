@@ -13,6 +13,8 @@ internal sealed class AppSettings
 
     public string? CustomOutputDirectory { get; set; }
 
+    public bool AcceptedDotNetLibraryLicense { get; set; }
+
     [JsonPropertyName("OutputFormat")]
     public string Format { get; set; } = nameof(OutputFormat.Mp3);
 
