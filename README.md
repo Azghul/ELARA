@@ -33,7 +33,7 @@ Original copyright/license notices remain preserved.
 
 ## Status
 
-Version 0.8.0 — Pre-1.0 release
+Version 1.0.0
 
 ## Third-party libraries
 
@@ -42,10 +42,11 @@ and the native LAME encoder.
 
 ## Build
 
-The project targets `net10.0-windows` and builds on Linux thanks to `EnableWindowsTargeting`:
+The project (`ELARA.csproj`) targets `net10.0-windows` and builds on Linux thanks to
+`EnableWindowsTargeting`:
 
 ```bash
-dotnet build
+dotnet build ELARA.csproj
 ```
 
 ## Publish (Windows x64)
@@ -75,11 +76,17 @@ Your last selections are remembered across restarts:
 - recording output location
 
 Settings are stored as JSON in the per-user app data folder
-(`...\SickPuppyCoding\SimpleAudioRecorder\settings.json`). If a saved device or output
-folder no longer exists at startup, the app falls back to the Windows default location
-and logs a warning. If a device selected in the UI disappears before you start a
-recording, the recording is **not** started and an error is shown instead of silently
-switching devices.
+(`%LOCALAPPDATA%\ELARA\settings.json`). Settings from ELARA 0.8.0 are migrated
+automatically on first start; the legacy file is never deleted.
+
+New recordings are saved to `Documents\ELARA` by default. Recordings made with
+ELARA 0.8.0 in the old default folder (`Documents\Simple Audio Recorder`) are not
+moved and remain untouched.
+
+If a saved device or output folder no longer exists at startup, the app falls back
+to the Windows default location and logs a warning. If a device selected in the UI
+disappears before you start a recording, the recording is **not** started and an
+error is shown instead of silently switching devices.
 
 ## Data safety
 

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Threading;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 public enum CaptureMode
 {
@@ -190,14 +190,15 @@ public sealed class AudioCaptureService : IDisposable
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
         ActiveSystemDeviceName = null;
-        tempDirectory = Path.Combine(Path.GetTempPath(), "SimpleAudioRecorder", Guid.NewGuid().ToString("N"));
+        tempDirectory = Path.Combine(Path.GetTempPath(), "ELARA", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
 
         tempMicrophonePath = Path.Combine(tempDirectory, "microphone.pcm");
         tempSystemPath = Path.Combine(tempDirectory, "system.pcm");
-        outputFilePath = Path.Combine(
+        var recordingBaseName = GetUniqueRecordingBaseName(
             OutputDirectory,
-            $"{DateTime.Now:yyyy-MM-dd HH-mm-ss} {mode.ToDisplayName().ToLowerInvariant()}{format.ToFileExtension()}");
+            $"{DateTime.Now:yyyy-MM-dd HH-mm-ss} {mode.ToDisplayName().ToLowerInvariant()}");
+        outputFilePath = Path.Combine(OutputDirectory, recordingBaseName + format.ToFileExtension());
 
         AppLogger.Info(
             $"Starting recording. Mode={mode}; RequestedFormat={format.ToDisplayName()}; RequestedMicrophoneId={(microphoneDeviceId ?? "<default>")}; RequestedPlaybackId={(playbackDeviceId ?? "<default>")}; OutputFile={outputFilePath}; TempDirectory={tempDirectory}");
@@ -498,6 +499,22 @@ public sealed class AudioCaptureService : IDisposable
     private static bool HasPcmData(string? path)
     {
         return path is not null && File.Exists(path) && new FileInfo(path).Length > 0;
+    }
+
+    private static string GetUniqueRecordingBaseName(string directory, string baseName)
+    {
+        // Never overwrite an existing recording: if either candidate file for this
+        // base name already exists, append a counter suffix ("name (2)", "name (3)").
+        var candidate = baseName;
+        var suffix = 2;
+        while (File.Exists(Path.Combine(directory, candidate + ".mp3"))
+            || File.Exists(Path.Combine(directory, candidate + ".wav")))
+        {
+            candidate = $"{baseName} ({suffix})";
+            suffix++;
+        }
+
+        return candidate;
     }
 
     private bool RequiredPcmDataComplete()

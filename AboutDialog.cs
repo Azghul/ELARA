@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal sealed class AboutDialog : Form
 {

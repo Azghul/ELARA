@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Runtime.InteropServices;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal enum WasapiCaptureKind
 {
@@ -62,7 +62,7 @@ internal sealed class WasapiCaptureSource : IDisposable
         workerThread = new Thread(CaptureThreadProc)
         {
             IsBackground = true,
-            Name = $"SimpleAudioRecorder-{friendlyName}",
+            Name = $"ELARA-{friendlyName}",
         };
         AppLogger.Info($"{friendlyName} capture thread starting. PreferredDeviceId={(preferredDeviceId ?? "<default>")}; TempFile={tempFilePath}");
         workerThread.Start();

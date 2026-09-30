@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal static class AppLogger
 {

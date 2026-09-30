@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal static class UiPreviewRunner
 {

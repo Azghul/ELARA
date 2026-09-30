@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace SimpleAudioRecorder;
+namespace ELARA;
 
 internal static class CoreAudioInterop
 {

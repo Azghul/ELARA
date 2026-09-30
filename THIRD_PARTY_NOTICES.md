@@ -6,8 +6,9 @@ NuGet packages / bundled binaries and were not modified.
 ## NAudio.Core (2.1.0)
 
 - Used for: stream types used by the MP3 encoder writer
-- License: MIT
-- Copyright: Copyright © Mark Heath and NAudio contributors
+- License: MIT — full text shipped in this distribution as
+  [LICENSE-NAudio.Core.txt](LICENSE-NAudio.Core.txt)
+- Copyright (as documented in the package): © Mark Heath 2022
 - Source: https://github.com/naudio/NAudio
 - Package: https://www.nuget.org/packages/NAudio.Core/
 - Pulled in transitively by NAudio.Lame.
@@ -15,8 +16,10 @@ NuGet packages / bundled binaries and were not modified.
 ## NAudio.Lame (2.1.0)
 
 - Used for: MP3 encoding (LAME wrapper)
-- License: MIT (LICENSE.txt as shipped inside the NuGet package)
-- Copyright: Copyright (c) 2013-2019 Corey Murtagh
+- License: MIT — full text shipped in this distribution as
+  [LICENSE-NAudio.Lame.txt](LICENSE-NAudio.Lame.txt) (identical to the
+  LICENSE.txt shipped inside the NuGet package)
+- Copyright (as documented in the package): Copyright (c) 2013-2019 Corey Murtagh
 - Source: https://github.com/Corey-M/NAudio.Lame
 - Package: https://www.nuget.org/packages/NAudio.Lame/
 
