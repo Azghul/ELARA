@@ -4,42 +4,72 @@ namespace SimpleAudioRecorder;
 
 internal sealed class AboutDialog : Form
 {
+    private const string UpstreamUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
+
     public AboutDialog(string githubUrl, string logDirectory)
     {
-        Text = "About Simple Audio Recorder";
+        Text = "About ELARA";
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
         ShowIcon = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(420, 232);
+        ClientSize = new Size(420, 320);
         BackColor = Color.FromArgb(15, 19, 40);
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
 
         var title = new Label
         {
-            Text = "Simple Audio Recorder",
+            Text = "ELARA",
             AutoSize = true,
             ForeColor = Color.FromArgb(247, 248, 255),
             Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold, GraphicsUnit.Point),
-            Location = new Point(22, 18),
+            Location = new Point(22, 16),
         };
 
         var subtitle = new Label
         {
-            Text = "Local desktop audio recorder for AI-ready meeting capture.",
+            Text = "Easy Local Audio Recording App",
             AutoSize = true,
             ForeColor = Color.FromArgb(195, 201, 231),
-            Location = new Point(24, 52),
+            Location = new Point(24, 50),
+        };
+
+        var description = new Label
+        {
+            Text = "A lightweight Windows recorder for microphone and system audio.",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(195, 201, 231),
+            Location = new Point(24, 74),
+        };
+
+        var originsNotice = new Label
+        {
+            Text = "Originally based on SimpleAudioRecorder by SickPuppyCoding. " +
+                   "This version has been extended substantially — UI, device selection, " +
+                   "output formats, configuration, tray integration, output handling and " +
+                   "recording-safety behaviour — and is developed independently.",
+            AutoSize = true,
+            MaximumSize = new Size(376, 0),
+            ForeColor = Color.FromArgb(195, 201, 231),
+            Location = new Point(24, 98),
+        };
+
+        var licenseNotice = new Label
+        {
+            Text = "Uses NAudio (MIT), NAudio.Lame (MIT) and LAME libmp3lame (LGPL). See README.",
+            AutoSize = true,
+            ForeColor = Color.FromArgb(150, 158, 198),
+            Location = new Point(24, 162),
         };
 
         var copyright = new Label
         {
-            Text = "Copyright (c) SickPuppyCoding",
+            Text = "Original SimpleAudioRecorder Copyright (c) SickPuppyCoding — MIT.",
             AutoSize = true,
             ForeColor = Color.FromArgb(150, 158, 198),
-            Location = new Point(24, 94),
+            Location = new Point(24, 184),
         };
 
         var linkLabel = new LinkLabel
@@ -49,12 +79,27 @@ internal sealed class AboutDialog : Form
             LinkColor = Color.FromArgb(145, 136, 255),
             ActiveLinkColor = Color.FromArgb(186, 176, 255),
             VisitedLinkColor = Color.FromArgb(145, 136, 255),
-            Location = new Point(24, 126),
+            Location = new Point(24, 212),
             LinkBehavior = LinkBehavior.HoverUnderline,
         };
         linkLabel.LinkClicked += (_, _) =>
         {
             Process.Start(new ProcessStartInfo(githubUrl) { UseShellExecute = true });
+        };
+
+        var upstreamLinkLabel = new LinkLabel
+        {
+            Text = "Original project: " + UpstreamUrl,
+            AutoSize = true,
+            LinkColor = Color.FromArgb(145, 136, 255),
+            ActiveLinkColor = Color.FromArgb(186, 176, 255),
+            VisitedLinkColor = Color.FromArgb(145, 136, 255),
+            Location = new Point(24, 234),
+            LinkBehavior = LinkBehavior.HoverUnderline,
+        };
+        upstreamLinkLabel.LinkClicked += (_, _) =>
+        {
+            Process.Start(new ProcessStartInfo(UpstreamUrl) { UseShellExecute = true });
         };
 
         var openLogsButton = new Button
@@ -87,8 +132,12 @@ internal sealed class AboutDialog : Form
 
         Controls.Add(title);
         Controls.Add(subtitle);
+        Controls.Add(description);
+        Controls.Add(originsNotice);
+        Controls.Add(licenseNotice);
         Controls.Add(copyright);
         Controls.Add(linkLabel);
+        Controls.Add(upstreamLinkLabel);
         Controls.Add(openLogsButton);
         Controls.Add(closeButton);
 

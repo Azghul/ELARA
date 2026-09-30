@@ -7,7 +7,8 @@ namespace SimpleAudioRecorder;
 
 public sealed class MainForm : Form
 {
-    private const string GitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
+    private const string GitHubUrl = "https://github.com/Azghul/SimpleAudioRecorder";
+    private const string UpstreamGitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
     private const float CardRadius = 18F;
 
     private readonly AudioCaptureService captureService = new();
@@ -15,9 +16,28 @@ public sealed class MainForm : Form
     private readonly ToolTip toolTip = new() { ShowAlways = true };
     private readonly ContextMenuStrip appMenu = new();
     private readonly ToolStripMenuItem microphoneMenuItem = new("Microphone");
+    private readonly ToolStripMenuItem systemAudioMenuItem = new("System Audio");
+    private readonly ToolStripMenuItem formatMenuItem = new("Format");
+    private readonly WindowControlButton optionsButton = new(WindowControlButtonKind.Options);
+    private readonly WindowControlButton minimizeButton = new(WindowControlButtonKind.Minimize);
+    private readonly WindowControlButton closeButton = new(WindowControlButtonKind.Close);
+    private NotifyIcon? trayIcon;
 
+    private readonly ContextMenuStrip modeMenu = new();
     private readonly Label timerLabel = new();
-    private readonly LinkLabel modeLink = new();
+    private readonly Label titleHeader = new();
+    private readonly Label modeFieldLabel = CreateFieldLabel("Mode");
+    private readonly Label micFieldLabel = CreateFieldLabel("Microphone");
+    private readonly Label systemFieldLabel = CreateFieldLabel("System Audio");
+    private readonly Label formatFieldLabel = CreateFieldLabel("Format");
+    private readonly Label outputFieldLabel = CreateFieldLabel("Save to");
+    private readonly DarkSelector modeSelector = new();
+    private readonly DarkSelector micSelector = new();
+    private readonly DarkSelector systemSelector = new();
+    private readonly DarkSelector formatSelector = new();
+    private readonly DarkSelector outputPathSelector = new(interactive: false);
+    private readonly FolderBrowseButton browseButton = new();
+    private readonly LinkLabel openLink = new();
     private readonly StatusBadgeControl statusBadge = new();
     private readonly DotMeterControl levelMeter = new();
     private readonly RecordActionButton recordButton = new();
@@ -25,14 +45,17 @@ public sealed class MainForm : Form
     private CaptureMode selectedMode = CaptureMode.Both;
     private string? selectedMicrophoneDeviceId;
     private string? selectedMicrophoneDeviceName;
+    private string? selectedPlaybackDeviceId;
+    private string? selectedPlaybackDeviceName;
+    private OutputFormat selectedFormat = OutputFormat.Mp3;
     private bool previewMode;
     private bool previewRecording;
 
     public MainForm()
     {
-        Text = "Simple Audio Recorder";
+        Text = "ELARA";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(294, 156);
+        ClientSize = new Size(432, 352);
         MinimumSize = Size;
         MaximumSize = Size;
         FormBorderStyle = FormBorderStyle.None;
@@ -47,6 +70,7 @@ public sealed class MainForm : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
 
         BuildLayout();
+        LoadSettings();
         BuildContextMenu();
         AttachContextMenu(this, appMenu);
         AttachDragBehavior(this);
@@ -56,7 +80,6 @@ public sealed class MainForm : Form
         UpdateWindowRegion();
 
         uiTimer.Tick += HandleUiTick;
-        modeLink.LinkClicked += (_, _) => CycleMode();
         recordButton.Click += async (_, _) => await ToggleRecordingAsync();
         AppLogger.Info("Main window initialized.");
     }
@@ -65,14 +88,25 @@ public sealed class MainForm : Form
     {
         if (!captureService.IsRecording)
         {
+            DisposeTrayIcon();
             captureService.Dispose();
             base.OnFormClosing(e);
             return;
         }
 
+        // Make sure the confirmation prompt has a visible owner when closing from the tray.
+        if (!Visible)
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
+        }
+
         var result = MessageBox.Show(
             this,
-            "A recording is still in progress. Stop and save it before closing?",
+            "A recording is still in progress.\n\n" +
+            "Yes — stop the recording now and save it.\n" +
+            "No — close ELARA. The app will still try to save the recording automatically.\n" +
+            "Cancel — keep recording.",
             "Stop Recording",
             MessageBoxButtons.YesNoCancel,
             MessageBoxIcon.Question);
@@ -85,6 +119,7 @@ public sealed class MainForm : Form
 
         if (result == DialogResult.No)
         {
+            DisposeTrayIcon();
             captureService.Dispose();
             base.OnFormClosing(e);
             return;
@@ -103,6 +138,7 @@ public sealed class MainForm : Form
             captureService.Dispose();
         }
 
+        DisposeTrayIcon();
         base.OnFormClosing(e);
     }
 
@@ -141,69 +177,261 @@ public sealed class MainForm : Form
 
     private void BuildLayout()
     {
-        timerLabel.AutoSize = true;
+        titleHeader.AutoSize = true;
+        titleHeader.Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
+        titleHeader.ForeColor = Color.FromArgb(247, 248, 255);
+        titleHeader.BackColor = Color.Transparent;
+        titleHeader.Text = "ELARA";
+
+        timerLabel.AutoSize = false;
         timerLabel.Font = new Font("Cascadia Mono", 28F, FontStyle.Bold, GraphicsUnit.Point);
         timerLabel.ForeColor = Color.FromArgb(250, 251, 255);
+        timerLabel.TextAlign = ContentAlignment.MiddleCenter;
         timerLabel.Text = "00:00";
         timerLabel.BackColor = Color.Transparent;
 
-        modeLink.AutoSize = true;
-        modeLink.Font = new Font("Segoe UI Semibold", 9F, FontStyle.Bold, GraphicsUnit.Point);
-        modeLink.LinkBehavior = LinkBehavior.HoverUnderline;
-        modeLink.ActiveLinkColor = Color.FromArgb(187, 176, 255);
-        modeLink.LinkColor = Color.FromArgb(145, 136, 255);
-        modeLink.VisitedLinkColor = modeLink.LinkColor;
-        modeLink.BackColor = Color.Transparent;
-        modeLink.TabStop = false;
+        openLink.AutoSize = true;
+        openLink.Text = "Open Audio Files";
+        openLink.ActiveLinkColor = Color.FromArgb(187, 176, 255);
+        openLink.LinkColor = Color.FromArgb(145, 136, 255);
+        openLink.VisitedLinkColor = openLink.LinkColor;
+        openLink.LinkBehavior = LinkBehavior.HoverUnderline;
+        openLink.BackColor = Color.Transparent;
+        openLink.TabStop = false;
+        openLink.Cursor = Cursors.Hand;
+        openLink.LinkClicked += (_, _) => OpenAudioFolder();
 
-        statusBadge.Visible = false;
         statusBadge.BackColor = Color.Transparent;
-
-        levelMeter.Size = new Size(68, 14);
         levelMeter.BackColor = Color.Transparent;
 
-        recordButton.Size = new Size(ClientSize.Width - Padding.Horizontal, 44);
+        recordButton.Size = new Size(368, 46);
         recordButton.BackColor = Color.Transparent;
 
+        minimizeButton.Click += (_, _) => HideToTray();
+        closeButton.Click += (_, _) => Close();
+        optionsButton.Click += (_, _) => ShowOptions();
+        toolTip.SetToolTip(optionsButton, "Options");
+
+        modeSelector.Click += (_, _) => OpenSelectorDropdown(modeSelector, modeMenu, RefreshModeMenu);
+        micSelector.Click += (_, _) => OpenSelectorDropdown(micSelector, microphoneMenuItem.DropDown, RefreshMicrophoneMenu);
+        systemSelector.Click += (_, _) => OpenSelectorDropdown(systemSelector, systemAudioMenuItem.DropDown, RefreshSystemAudioMenu);
+        formatSelector.Click += (_, _) => OpenSelectorDropdown(formatSelector, formatMenuItem.DropDown, RefreshFormatMenu);
+        browseButton.Click += (_, _) => BrowseForOutputFolder();
+
+        Controls.Add(titleHeader);
         Controls.Add(timerLabel);
-        Controls.Add(modeLink);
         Controls.Add(statusBadge);
         Controls.Add(levelMeter);
+        Controls.Add(modeFieldLabel);
+        Controls.Add(micFieldLabel);
+        Controls.Add(systemFieldLabel);
+        Controls.Add(formatFieldLabel);
+        Controls.Add(outputFieldLabel);
+        Controls.Add(modeSelector);
+        Controls.Add(micSelector);
+        Controls.Add(systemSelector);
+        Controls.Add(formatSelector);
+        Controls.Add(outputPathSelector);
+        Controls.Add(browseButton);
         Controls.Add(recordButton);
+        Controls.Add(openLink);
+        Controls.Add(minimizeButton);
+        Controls.Add(closeButton);
+        Controls.Add(optionsButton);
 
         LayoutCompactControls();
+    }
+
+    private static Label CreateFieldLabel(string text)
+    {
+        return new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
+            ForeColor = Color.FromArgb(150, 158, 198),
+            BackColor = Color.Transparent,
+        };
+    }
+
+    private void OpenSelectorDropdown(Control anchor, ToolStripDropDown dropDown, Action refresh)
+    {
+        if (IsVisualRecording())
+        {
+            return;
+        }
+
+        refresh();
+        dropDown.Show(anchor, new Point(0, anchor.Height + 2));
+    }
+
+    private void RefreshModeMenu()
+    {
+        modeMenu.Items.Clear();
+
+        foreach (var mode in new[] { CaptureMode.Both, CaptureMode.Microphone, CaptureMode.System })
+        {
+            var localMode = mode;
+            modeMenu.Items.Add(CreateMicrophoneMenuItem(
+                localMode.ToDisplayName(),
+                isChecked: localMode == selectedMode,
+                onClick: () =>
+                {
+                    selectedMode = localMode;
+                    AppLogger.Info($"Capture mode changed to {localMode.ToDisplayName()}.");
+                    UpdateModeText();
+                    UpdateStatus(null, default, null);
+                }));
+        }
     }
 
     private void BuildContextMenu()
     {
         microphoneMenuItem.DropDownOpening += (_, _) => RefreshMicrophoneMenu();
+        systemAudioMenuItem.DropDownOpening += (_, _) => RefreshSystemAudioMenu();
+        formatMenuItem.DropDownOpening += (_, _) => RefreshFormatMenu();
 
         appMenu.Items.Add("About App", null, (_, _) => ShowAboutDialog());
         appMenu.Items.Add("View Audio Files", null, (_, _) => OpenAudioFolder());
         appMenu.Items.Add(microphoneMenuItem);
+        appMenu.Items.Add(systemAudioMenuItem);
+        appMenu.Items.Add(formatMenuItem);
         appMenu.Items.Add(new ToolStripSeparator());
         appMenu.Items.Add("Exit", null, (_, _) => Close());
 
         RefreshMicrophoneMenu();
+        RefreshSystemAudioMenu();
+        RefreshFormatMenu();
+    }
+
+    private void LoadSettings()
+    {
+        var settings = AppSettings.Load();
+        selectedFormat = settings.ResolveOutputFormat();
+
+        if (string.IsNullOrWhiteSpace(settings.CustomOutputDirectory))
+        {
+            captureService.CustomOutputDirectory = null;
+        }
+        else
+        {
+            try
+            {
+                Directory.CreateDirectory(settings.CustomOutputDirectory);
+                captureService.CustomOutputDirectory = settings.CustomOutputDirectory;
+            }
+            catch (Exception ex)
+            {
+                captureService.CustomOutputDirectory = null;
+                AppLogger.Warn(
+                    $"Saved output directory '{settings.CustomOutputDirectory}' could not be created; falling back to the default recording directory. {ex.Message}");
+            }
+        }
+
+        try
+        {
+            var microphones = AudioInputDeviceCatalog.GetMicrophones();
+            if (string.IsNullOrWhiteSpace(settings.SelectedMicrophoneDeviceId))
+            {
+                selectedMicrophoneDeviceId = null;
+                selectedMicrophoneDeviceName = null;
+            }
+            else
+            {
+                var saved = microphones.FirstOrDefault(device =>
+                    string.Equals(device.Id, settings.SelectedMicrophoneDeviceId, StringComparison.Ordinal));
+                if (saved.Id is not null)
+                {
+                    selectedMicrophoneDeviceId = saved.Id;
+                    selectedMicrophoneDeviceName = saved.DisplayName;
+                }
+                else
+                {
+                    selectedMicrophoneDeviceId = null;
+                    selectedMicrophoneDeviceName = null;
+                    AppLogger.Warn(
+                        $"Saved microphone '{settings.SelectedMicrophoneDeviceId}' is no longer available; falling back to the Windows default.");
+                }
+            }
+
+            var playbackDevices = AudioInputDeviceCatalog.GetPlaybackDevices();
+            if (string.IsNullOrWhiteSpace(settings.SelectedPlaybackDeviceId))
+            {
+                selectedPlaybackDeviceId = null;
+                selectedPlaybackDeviceName = null;
+            }
+            else
+            {
+                var saved = playbackDevices.FirstOrDefault(device =>
+                    string.Equals(device.Id, settings.SelectedPlaybackDeviceId, StringComparison.Ordinal));
+                if (saved.Id is not null)
+                {
+                    selectedPlaybackDeviceId = saved.Id;
+                    selectedPlaybackDeviceName = saved.DisplayName;
+                }
+                else
+                {
+                    selectedPlaybackDeviceId = null;
+                    selectedPlaybackDeviceName = null;
+                    AppLogger.Warn(
+                        $"Saved playback device '{settings.SelectedPlaybackDeviceId}' is no longer available; falling back to the Windows default.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Device validation is best-effort; the normal start error handling covers
+            // machines without usable audio devices.
+            AppLogger.Warn($"Could not validate the saved devices at startup. {ex.Message}");
+        }
+    }
+
+    private void SaveSettings()
+    {
+        new AppSettings
+        {
+            SelectedMicrophoneDeviceId = selectedMicrophoneDeviceId,
+            SelectedPlaybackDeviceId = selectedPlaybackDeviceId,
+            Format = selectedFormat.ToString(),
+            CustomOutputDirectory = captureService.CustomOutputDirectory,
+        }.Save();
     }
 
     private void LayoutCompactControls()
     {
-        var left = Padding.Left + 2;
-        var top = Padding.Top + 2;
-        var right = ClientSize.Width - Padding.Right - 2;
+        closeButton.Location = new Point(ClientSize.Width - 28, 8);
+        minimizeButton.Location = new Point(closeButton.Left - 24, 8);
+        optionsButton.Location = new Point(minimizeButton.Left - 24, 8);
+        titleHeader.Location = new Point(18, 8);
 
-        timerLabel.Location = new Point(left, top);
-        modeLink.Location = new Point(left + 2, timerLabel.Bottom - 2);
-        levelMeter.Location = new Point(right - levelMeter.Width, top + 10);
+        // Status badge sits between the title and the window control buttons.
+        statusBadge.Location = new Point(optionsButton.Left - 8 - statusBadge.Width, 6);
 
-        if (statusBadge.Visible)
+        timerLabel.Location = new Point(20, 36);
+        timerLabel.Size = new Size(ClientSize.Width - 40, 44);
+
+        levelMeter.Location = new Point((ClientSize.Width - levelMeter.Width) / 2, 84);
+
+        var selectorLeft = 126;
+        var selectorWidth = ClientSize.Width - selectorLeft - 22;
+        var rowFields = new[] { (modeSelector, modeFieldLabel), (micSelector, micFieldLabel), (systemSelector, systemFieldLabel), (formatSelector, formatFieldLabel) };
+        var rowTop = 108;
+        foreach (var (selector, fieldLabel) in rowFields)
         {
-            statusBadge.Location = new Point(right - statusBadge.Width, top + 4);
+            selector.SetBounds(selectorLeft, rowTop, selectorWidth, 26);
+            fieldLabel.Location = new Point(22, rowTop + 5);
+            rowTop += 34;
         }
 
-        recordButton.Location = new Point(Padding.Left + 1, ClientSize.Height - Padding.Bottom - recordButton.Height);
-        recordButton.Width = ClientSize.Width - Padding.Horizontal - 2;
+        var outputRowTop = rowTop;
+        outputPathSelector.SetBounds(selectorLeft, outputRowTop, selectorWidth - 42, 26);
+        browseButton.Location = new Point(selectorLeft + selectorWidth - 36, outputRowTop);
+        outputFieldLabel.Location = new Point(22, outputRowTop + 5);
+
+        recordButton.Location = new Point(32, outputRowTop + 40);
+        recordButton.Width = ClientSize.Width - 64;
+
+        openLink.Location = new Point((ClientSize.Width - openLink.PreferredWidth) / 2, ClientSize.Height - 24);
     }
 
     private void HandleUiTick(object? sender, EventArgs e)
@@ -240,13 +468,16 @@ public sealed class MainForm : Form
         try
         {
             AppLogger.Info(
-                $"Start requested from UI. Mode={selectedMode}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]");
-            await captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId);
+                $"Start requested from UI. Mode={selectedMode}; Format={selectedFormat.ToDisplayName()}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]; SelectedPlayback={(selectedPlaybackDeviceName ?? "Windows default")} [{(selectedPlaybackDeviceId ?? "<default>")}]");
+            await captureService.StartAsync(selectedMode, selectedMicrophoneDeviceId, selectedPlaybackDeviceId, selectedFormat);
             timerLabel.Text = "00:00";
             uiTimer.Start();
-            var recordingDetails = selectedMode is CaptureMode.System
-                ? $"{selectedMode.ToDisplayName()} capture is recording."
-                : $"{selectedMode.ToDisplayName()} capture is recording with {captureService.ActiveMicrophoneDeviceName ?? selectedMicrophoneDeviceName ?? "the Windows default microphone"}.";
+            var systemDeviceText = selectedMode is CaptureMode.System or CaptureMode.Both
+                ? captureService.ActiveSystemDeviceName ?? selectedPlaybackDeviceName ?? "the Windows default playback device"
+                : null;
+            var recordingDetails = systemDeviceText is null
+                ? $"{selectedMode.ToDisplayName()} capture is recording with {captureService.ActiveMicrophoneDeviceName ?? selectedMicrophoneDeviceName ?? "the Windows default microphone"}."
+                : $"{selectedMode.ToDisplayName()} capture is recording with {systemDeviceText}.";
             UpdateStatus("Recording", Color.FromArgb(255, 142, 168), recordingDetails);
         }
         catch (Exception ex)
@@ -264,7 +495,7 @@ public sealed class MainForm : Form
     private async Task StopRecordingAsync()
     {
         recordButton.Enabled = false;
-        UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the WAV file and cleaning up the recording session.");
+        UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the recording file and cleaning up the recording session.");
 
         try
         {
@@ -272,7 +503,34 @@ public sealed class MainForm : Form
             var info = await captureService.StopAsync();
             timerLabel.Text = "00:00";
             levelMeter.ResetMeter();
-            UpdateStatus("Saved", Color.FromArgb(110, 230, 182), $"Saved {Path.GetFileName(info.FilePath)}");
+
+            // The RecordingInfo always reflects the actually saved state.
+            var statusText = $"Saved {Path.GetFileName(info.FilePath)}";
+            var statusDetails = statusText;
+            if (info.WasRescuedToWav)
+            {
+                statusText = $"{statusText} (WAV)";
+                statusDetails = "MP3 encoding failed. The recording was rescued as a WAV file.";
+            }
+
+            if (info.HadCaptureStopErrors)
+            {
+                statusDetails = $"{statusDetails} A capture source stopped with an error, but the recording was saved.";
+            }
+
+            UpdateStatus("Saved", Color.FromArgb(110, 230, 182), statusDetails);
+
+            if (info.WasRescuedToWav || info.HadCaptureStopErrors)
+            {
+                MessageBox.Show(
+                    this,
+                    info.WasRescuedToWav
+                        ? $"MP3 encoding failed. The recording was saved as a WAV file instead:\n{info.FilePath}"
+                        : $"The recording was saved, but a capture source stopped with an error:\n{info.FilePath}",
+                    "Recording Saved",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+            }
         }
         catch (Exception ex)
         {
@@ -291,56 +549,59 @@ public sealed class MainForm : Form
     {
         recordButton.IsRecording = IsVisualRecording();
         recordButton.Enabled = previewMode || !captureService.IsRecording || recordButton.IsRecording;
-        modeLink.Enabled = !IsVisualRecording();
-        microphoneMenuItem.Enabled = !IsVisualRecording();
+
+        var selectionLocked = IsVisualRecording();
+        modeSelector.Enabled = !selectionLocked;
+        micSelector.Enabled = !selectionLocked;
+        systemSelector.Enabled = !selectionLocked;
+        formatSelector.Enabled = !selectionLocked;
+        outputPathSelector.Enabled = !selectionLocked;
+        browseButton.Enabled = !selectionLocked;
+        optionsButton.Enabled = !selectionLocked;
+        microphoneMenuItem.Enabled = !selectionLocked;
+        systemAudioMenuItem.Enabled = !selectionLocked;
+        formatMenuItem.Enabled = !selectionLocked;
         UpdateModeText();
-    }
-
-    private void CycleMode()
-    {
-        if (IsVisualRecording())
-        {
-            return;
-        }
-
-        selectedMode = selectedMode switch
-        {
-            CaptureMode.Both => CaptureMode.Microphone,
-            CaptureMode.Microphone => CaptureMode.System,
-            _ => CaptureMode.Both,
-        };
-
-        AppLogger.Info($"Capture mode changed to {selectedMode}.");
-        UpdateModeText();
-        UpdateStatus(null, default, null);
     }
 
     private void UpdateModeText()
     {
-        modeLink.Text = selectedMode.ToDisplayName();
-        var microphoneText = selectedMicrophoneDeviceName ?? "Windows default microphone";
-        toolTip.SetToolTip(modeLink, $"{selectedMode.ToDisplayName()} capture. Click to switch between Both, Mic, and System. Current microphone: {microphoneText}.");
+        modeSelector.Text = selectedMode.ToDisplayName();
+        micSelector.Text = selectedMicrophoneDeviceName ?? "Windows default microphone";
+        systemSelector.Text = selectedPlaybackDeviceName ?? "Windows default playback device";
+        formatSelector.Text = selectedFormat.ToDisplayName();
+
+        toolTip.SetToolTip(
+            modeSelector,
+            $"Capture mode: {selectedMode.ToDisplayName()}. Both records system audio (left) and microphone (right), Mic only the microphone, System only system audio.");
+        toolTip.SetToolTip(micSelector, $"Microphone: {micSelector.Text}");
+        toolTip.SetToolTip(systemSelector, $"System audio: {systemSelector.Text}");
+        toolTip.SetToolTip(formatSelector, $"Output format: {selectedFormat.ToDisplayName()}");
+        var outputDirectory = captureService.CustomOutputDirectory ?? AppPaths.RecordingDirectory;
+        outputPathSelector.Text = outputDirectory;
+        toolTip.SetToolTip(outputPathSelector, $"Recordings are saved to: {outputDirectory}");
+        toolTip.SetToolTip(browseButton, "Choose the folder where recordings are saved.");
     }
 
     private void UpdateStatus(string? text, Color color, string? details)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
-            statusBadge.Visible = false;
-            levelMeter.Visible = true;
-            toolTip.SetToolTip(statusBadge, null);
-            LayoutCompactControls();
-            Invalidate();
-            return;
+            statusBadge.Caption = "Ready";
+            statusBadge.AccentColor = Color.FromArgb(150, 136, 255);
+            toolTip.SetToolTip(statusBadge, "Idle. Choose mode, devices, and format, then start recording.");
+        }
+        else
+        {
+            statusBadge.Caption = text;
+            statusBadge.AccentColor = color;
+            toolTip.SetToolTip(statusBadge, details ?? text);
         }
 
-        statusBadge.Caption = text;
-        statusBadge.AccentColor = color;
         statusBadge.Visible = true;
-        levelMeter.Visible = false;
-        toolTip.SetToolTip(statusBadge, details ?? text);
-        LayoutCompactControls();
+        levelMeter.Visible = true;
         statusBadge.Invalidate();
+        LayoutCompactControls();
         Invalidate();
     }
 
@@ -374,7 +635,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        IReadOnlyList<AudioInputDeviceInfo> microphones;
+        IReadOnlyList<AudioDeviceInfo> microphones;
         try
         {
             microphones = AudioInputDeviceCatalog.GetMicrophones();
@@ -413,6 +674,7 @@ public sealed class MainForm : Form
                 selectedMicrophoneDeviceId = null;
                 selectedMicrophoneDeviceName = null;
                 AppLogger.Info("Microphone selection reset to Windows default.");
+                SaveSettings();
                 UpdateModeText();
             }));
 
@@ -441,6 +703,7 @@ public sealed class MainForm : Form
                     selectedMicrophoneDeviceId = localMicrophone.Id;
                     selectedMicrophoneDeviceName = localMicrophone.DisplayName;
                     AppLogger.Info($"Microphone selection changed to {localMicrophone.DisplayName} [{localMicrophone.Id}]");
+                    SaveSettings();
                     UpdateModeText();
                 }));
         }
@@ -472,6 +735,155 @@ public sealed class MainForm : Form
         return item;
     }
 
+    private void RefreshSystemAudioMenu()
+    {
+        systemAudioMenuItem.DropDownItems.Clear();
+
+        if (captureService.IsRecording || previewMode)
+        {
+            systemAudioMenuItem.Text = "System Audio";
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("Locked while recording") { Enabled = false });
+            return;
+        }
+
+        IReadOnlyList<AudioDeviceInfo> playbackDevices;
+        try
+        {
+            playbackDevices = AudioInputDeviceCatalog.GetPlaybackDevices();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("Could not enumerate playback devices for the context menu.", ex);
+            systemAudioMenuItem.Text = "System Audio";
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("Could not load playback devices") { Enabled = false });
+            return;
+        }
+
+        var effectiveSelectionId = selectedPlaybackDeviceId;
+        var effectiveSelectionName = selectedPlaybackDeviceName;
+
+        if (string.IsNullOrWhiteSpace(effectiveSelectionId))
+        {
+            effectiveSelectionName = playbackDevices.FirstOrDefault(device => device.IsDefault).DisplayName;
+        }
+        else
+        {
+            var selectedDevice = playbackDevices.FirstOrDefault(device =>
+                string.Equals(device.Id, effectiveSelectionId, StringComparison.Ordinal));
+            if (selectedDevice != default)
+            {
+                effectiveSelectionName = selectedDevice.DisplayName;
+            }
+        }
+
+        systemAudioMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+            "Windows default",
+            isChecked: string.IsNullOrWhiteSpace(selectedPlaybackDeviceId),
+            onClick: () =>
+            {
+                selectedPlaybackDeviceId = null;
+                selectedPlaybackDeviceName = null;
+                AppLogger.Info("System audio selection reset to Windows default.");
+                SaveSettings();
+                UpdateModeText();
+            }));
+
+        if (playbackDevices.Count > 0)
+        {
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        var selectedDeviceMissing = !string.IsNullOrWhiteSpace(selectedPlaybackDeviceId)
+            && playbackDevices.All(device => !string.Equals(device.Id, selectedPlaybackDeviceId, StringComparison.Ordinal));
+
+        if (selectedDeviceMissing)
+        {
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("Selected playback device is unavailable") { Enabled = false });
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        foreach (var playbackDevice in playbackDevices)
+        {
+            var localDevice = playbackDevice;
+            systemAudioMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+                localDevice.MenuLabel,
+                isChecked: string.Equals(localDevice.Id, selectedPlaybackDeviceId, StringComparison.Ordinal),
+                onClick: () =>
+                {
+                    selectedPlaybackDeviceId = localDevice.Id;
+                    selectedPlaybackDeviceName = localDevice.DisplayName;
+                    AppLogger.Info($"System audio selection changed to {localDevice.DisplayName} [{localDevice.Id}]");
+                    SaveSettings();
+                    UpdateModeText();
+                }));
+        }
+
+        if (playbackDevices.Count == 0)
+        {
+            systemAudioMenuItem.DropDownItems.Add(new ToolStripMenuItem("No active playback devices found") { Enabled = false });
+        }
+
+        var headerText = effectiveSelectionName is { Length: > 0 }
+            ? $"System Audio ({effectiveSelectionName})"
+            : "System Audio";
+        if (selectedDeviceMissing)
+        {
+            headerText = "System Audio (Unavailable)";
+        }
+
+        systemAudioMenuItem.Text = headerText;
+    }
+
+    private void RefreshFormatMenu()
+    {
+        formatMenuItem.DropDownItems.Clear();
+
+        foreach (var format in new[] { OutputFormat.Mp3, OutputFormat.Wav })
+        {
+            var localFormat = format;
+            formatMenuItem.DropDownItems.Add(CreateMicrophoneMenuItem(
+                localFormat.ToDisplayName(),
+                isChecked: localFormat == selectedFormat,
+                onClick: () =>
+                {
+                    selectedFormat = localFormat;
+                    AppLogger.Info($"Output format changed to {localFormat.ToDisplayName()}.");
+                    SaveSettings();
+                    UpdateModeText();
+                }));
+        }
+
+        formatMenuItem.Text = $"Format ({selectedFormat.ToDisplayName()})";
+    }
+
+    private void BrowseForOutputFolder()
+    {
+        if (IsVisualRecording())
+        {
+            return;
+        }
+
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Choose the folder where new recordings are saved.",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true,
+        };
+
+        var current = captureService.CustomOutputDirectory;
+        if (!string.IsNullOrWhiteSpace(current) && Directory.Exists(current))
+        {
+            dialog.SelectedPath = current;
+        }
+
+        if (dialog.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(dialog.SelectedPath))
+        {
+            return;
+        }
+
+        ApplyOutputDirectorySelection(dialog.SelectedPath);
+    }
+
     private void AttachContextMenu(Control root, ContextMenuStrip menu)
     {
         root.ContextMenuStrip = menu;
@@ -484,7 +896,12 @@ public sealed class MainForm : Form
 
     private void AttachDragBehavior(Control control)
     {
-        if (control == recordButton || control == modeLink)
+        if (control == recordButton || control == minimizeButton || control == closeButton
+            || control == optionsButton
+            || control == openLink
+            || control == modeSelector || control == micSelector
+            || control == systemSelector || control == formatSelector
+            || control == outputPathSelector || control == browseButton)
         {
             return;
         }
@@ -494,6 +911,104 @@ public sealed class MainForm : Form
         {
             AttachDragBehavior(child);
         }
+    }
+
+    private void HideToTray()
+    {
+        trayIcon ??= CreateTrayIcon();
+        trayIcon.Visible = true;
+        Hide();
+        AppLogger.Info("Window hidden to the notification area.");
+    }
+
+    private void ShowOptions()
+    {
+        AppLogger.Info("Opening Options dialog.");
+        using var dialog = new OptionsDialog(
+            captureService.CustomOutputDirectory,
+            AppPaths.RecordingDirectory,
+            onOutputDirectoryChanged: ApplyOutputDirectorySelection,
+            openAudioFiles: OpenAudioFolder,
+            openLogFiles: OpenLogFiles);
+        dialog.ShowDialog(this);
+    }
+
+    private void ApplyOutputDirectorySelection(string? selectedPath)
+    {
+        captureService.CustomOutputDirectory = string.IsNullOrWhiteSpace(selectedPath) ? null : selectedPath;
+        SaveSettings();
+        AppLogger.Info($"Recording output directory set to: {captureService.CustomOutputDirectory ?? "<default>"}");
+        UpdateModeText();
+    }
+
+    private void OpenLogFiles()
+    {
+        Directory.CreateDirectory(captureService.LogDirectory);
+        AppLogger.Info($"Opening log folder: {captureService.LogDirectory}");
+        Process.Start(new ProcessStartInfo(captureService.LogDirectory) { UseShellExecute = true });
+    }
+
+    private void RestoreFromTray()
+    {
+        if (!Visible)
+        {
+            Show();
+            WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        if (trayIcon is not null)
+        {
+            trayIcon.Visible = false;
+        }
+
+        AppLogger.Info("Window restored from the notification area.");
+    }
+
+    private void DisposeTrayIcon()
+    {
+        if (trayIcon is null)
+        {
+            return;
+        }
+
+        trayIcon.Visible = false;
+        trayIcon.Dispose();
+        trayIcon = null;
+    }
+
+    private NotifyIcon CreateTrayIcon()
+    {
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("Open", null, (_, _) => RestoreFromTray());
+        menu.Items.Add("Exit", null, (_, _) => Close());
+
+        var icon = new NotifyIcon
+        {
+            Icon = CreateTrayIconImage(),
+            Text = "ELARA",
+            ContextMenuStrip = menu,
+            Visible = false,
+        };
+        icon.DoubleClick += (_, _) => RestoreFromTray();
+        return icon;
+    }
+
+    private static Icon CreateTrayIconImage()
+    {
+        // Small application icon drawn in code so no asset file is needed:
+        // purple disc with the red record dot, matching the main button.
+        using var bitmap = new Bitmap(16, 16);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var disc = new SolidBrush(Color.FromArgb(101, 77, 245));
+            using var dot = new SolidBrush(Color.FromArgb(255, 98, 129));
+            graphics.FillEllipse(disc, 1, 1, 14, 14);
+            graphics.FillEllipse(dot, 5, 5, 6, 6);
+        }
+
+        return Icon.FromHandle(bitmap.GetHicon());
     }
 
     private void HandleDragMouseDown(object? sender, MouseEventArgs e)
@@ -532,6 +1047,217 @@ public sealed class MainForm : Form
         path.AddArc(rect.X, rect.Bottom - diameter, diameter, diameter, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    private enum WindowControlButtonKind
+    {
+        Options,
+        Minimize,
+        Close,
+    }
+
+    private sealed class WindowControlButton : Control
+    {
+        private readonly WindowControlButtonKind kind;
+        private bool hovered;
+
+        public WindowControlButton(WindowControlButtonKind kind)
+        {
+            this.kind = kind;
+            Size = new Size(22, 16);
+            Cursor = Cursors.Hand;
+            Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+            ForeColor = Color.FromArgb(150, 158, 198);
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+            BackColor = Color.Transparent;
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var color = kind switch
+            {
+                WindowControlButtonKind.Close => hovered ? Color.FromArgb(255, 98, 129) : ForeColor,
+                WindowControlButtonKind.Options => hovered ? Color.FromArgb(178, 161, 255) : ForeColor,
+                _ => hovered ? Color.FromArgb(210, 216, 240) : ForeColor,
+            };
+
+            var caption = kind switch
+            {
+                WindowControlButtonKind.Close => "\u2715",
+                WindowControlButtonKind.Options => "\u2699",
+                _ => "\u2013",
+            };
+            TextRenderer.DrawText(
+                e.Graphics,
+                caption,
+                Font,
+                ClientRectangle,
+                color,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+
+    private sealed class DarkSelector : Control
+    {
+        private readonly bool interactive;
+        private bool hovered;
+
+        public DarkSelector(bool interactive = true)
+        {
+            this.interactive = interactive;
+            Size = new Size(284, 26);
+            Cursor = interactive ? Cursors.Hand : Cursors.Default;
+            Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+            ForeColor = Color.FromArgb(235, 238, 248);
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+            BackColor = Color.Transparent;
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnTextChanged(EventArgs e)
+        {
+            base.OnTextChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            using var path = CreateRoundedRectangle(ClientRectangle, 8F);
+            using var fill = new SolidBrush(Enabled && hovered ? Color.FromArgb(31, 37, 68) : Color.FromArgb(24, 29, 56));
+            using var border = new Pen(Enabled
+                ? (hovered ? Color.FromArgb(122, 99, 255) : Color.FromArgb(49, 57, 96))
+                : Color.FromArgb(38, 44, 74));
+
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+
+            var textColor = Enabled ? ForeColor : Color.FromArgb(105, 111, 146);
+            var textRect = new Rectangle(10, 0, Width - 34, Height);
+            TextRenderer.DrawText(
+                e.Graphics,
+                Text,
+                Font,
+                textRect,
+                textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+            var chevronColor = Enabled ? Color.FromArgb(150, 136, 255) : Color.FromArgb(90, 96, 128);
+            var chevronRect = new Rectangle(Width - 26, 0, 18, Height);
+            if (interactive)
+            {
+                TextRenderer.DrawText(
+                    e.Graphics,
+                    "\u25BE",
+                    Font,
+                    chevronRect,
+                    chevronColor,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+            }
+        }
+    }
+
+    private sealed class FolderBrowseButton : Control
+    {
+        private bool hovered;
+
+        public FolderBrowseButton()
+        {
+            Size = new Size(36, 26);
+            Cursor = Cursors.Hand;
+            SetStyle(
+                ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer
+                | ControlStyles.UserPaint
+                | ControlStyles.ResizeRedraw
+                | ControlStyles.SupportsTransparentBackColor,
+                true);
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hovered = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hovered = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            base.OnEnabledChanged(e);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+
+            using var path = CreateRoundedRectangle(ClientRectangle, 8F);
+            using var fill = new SolidBrush(Enabled && hovered ? Color.FromArgb(31, 37, 68) : Color.FromArgb(24, 29, 56));
+            using var border = new Pen(Enabled
+                ? (hovered ? Color.FromArgb(122, 99, 255) : Color.FromArgb(49, 57, 96))
+                : Color.FromArgb(38, 44, 74));
+
+            e.Graphics.FillPath(fill, path);
+            e.Graphics.DrawPath(border, path);
+
+            var color = Enabled ? Color.FromArgb(150, 158, 198) : Color.FromArgb(90, 96, 128);
+            using var brush = new SolidBrush(color);
+            // Simple folder glyph: back tab + body.
+            e.Graphics.FillRectangle(brush, 10, 8, 8, 3);
+            e.Graphics.FillRectangle(brush, 10, 10, 16, 9);
+        }
     }
 
     private sealed class StatusBadgeControl : Control
@@ -686,7 +1412,7 @@ public sealed class MainForm : Form
             Cursor = Cursors.Hand;
             Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
             ForeColor = Color.White;
-            Size = new Size(258, 44);
+            Size = new Size(368, 46);
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
                 | ControlStyles.OptimizedDoubleBuffer
@@ -771,7 +1497,7 @@ public sealed class MainForm : Form
             e.Graphics.FillPath(brush, path);
             e.Graphics.DrawPath(borderPen, path);
 
-            var text = isRecording ? "Stop" : "Record";
+            var text = isRecording ? "Stop" : "Start Recording";
             var textSize = TextRenderer.MeasureText(text, Font);
             var iconRect = new Rectangle(
                 (Width - textSize.Width - 24) / 2,

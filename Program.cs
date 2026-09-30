@@ -12,7 +12,7 @@ internal static class Program
             AppLogger.Error("Unhandled UI exception.", eventArgs.Exception);
             MessageBox.Show(
                 $"The app hit an unexpected error.\n\nA verbose log was written to:\n{AppLogger.CurrentLogFilePath}",
-                "Simple Audio Recorder",
+                "ELARA",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
         };
@@ -45,7 +45,7 @@ internal static class Program
             AppLogger.Error("Fatal application startup failure.", ex);
             MessageBox.Show(
                 $"The app could not start.\n\nA verbose log was written to:\n{AppLogger.CurrentLogFilePath}",
-                "Simple Audio Recorder",
+                "ELARA",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error);
             return 1;

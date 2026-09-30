@@ -12,6 +12,13 @@ internal static class AppPaths
         Path.Combine(AppContext.BaseDirectory, "Logs"),
         Path.Combine(Path.GetTempPath(), "SimpleAudioRecorder", "Logs"));
 
+    public static string SettingsDirectory { get; } = ResolveWritableDirectory(
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SickPuppyCoding", "SimpleAudioRecorder"),
+        Path.Combine(AppContext.BaseDirectory, "Settings"),
+        Path.Combine(Path.GetTempPath(), "SimpleAudioRecorder", "Settings"));
+
+    public static string SettingsFilePath { get; } = Path.Combine(SettingsDirectory, "settings.json");
+
     private static string ResolveWritableDirectory(params string[] candidates)
     {
         foreach (var candidate in candidates)
