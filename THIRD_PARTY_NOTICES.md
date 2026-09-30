@@ -24,12 +24,15 @@ NuGet packages / bundled binaries and were not modified.
 
 - Files: `libmp3lame.64.dll` (win-x64), bundled unmodified inside the NAudio.Lame
   NuGet package and copied to the application folder by that package.
-- License: GNU Lesser General Public License (LGPL), as published by the LAME project.
-  The exact license text and version are defined by the LAME project; see the links below.
-- Project / source: https://lame.sourceforge.io/
-- LGPL license text: https://www.gnu.org/licenses/lgpl.html
-- The library is distributed unmodified and linked at runtime (dynamic linking);
-  no LAME source code is part of this repository.
+- LAME version: **3.100** (identifiable from the binary itself; build date 2017-10-22)
+- License: **GNU Library General Public License, Version 2, June 1991** — the exact
+  license text of the LAME 3.100 release (`COPYING`), shipped unmodified in this
+  distribution as [LICENSE-LAME.txt](LICENSE-LAME.txt).
+- This distribution ships the library **unmodified and as a separate, dynamically
+  loaded DLL** (`libmp3lame.64.dll`), which is the usage model explicitly
+  recommended by the LAME project's LICENSE file.
+- Project / source for exactly this version (LAME 3.100):
+  https://sourceforge.net/projects/lame/files/lame/3.100/
 
 ## ELARA
 

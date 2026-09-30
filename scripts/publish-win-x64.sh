@@ -27,6 +27,7 @@ rm -f "${publish_dir}/libmp3lame.32.dll"
 # Include license files with the distribution.
 cp "${repo_root}/LICENSE" "${publish_dir}/LICENSE"
 cp "${repo_root}/THIRD_PARTY_NOTICES.md" "${publish_dir}/THIRD_PARTY_NOTICES.md"
+cp "${repo_root}/LICENSE-LAME.txt" "${publish_dir}/LICENSE-LAME.txt"
 
 echo
 echo "=== Publish output (${publish_dir}) ==="
@@ -41,6 +42,7 @@ required_files=(
     "NAudio.Core.dll"
     "LICENSE"
     "THIRD_PARTY_NOTICES.md"
+    "LICENSE-LAME.txt"
 )
 missing=0
 for file in "${required_files[@]}"; do
