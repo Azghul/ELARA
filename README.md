@@ -28,7 +28,7 @@ output handling and recording-safety behaviour.
 
 Original copyright/license notices remain preserved.
 
-- Current project: https://github.com/Azghul/SimpleAudioRecorder
+- Current project: https://github.com/Azghul/ELARA
 - Original project: https://github.com/SickPuppyCoding/SimpleAudioRecorder
 
 ## Status

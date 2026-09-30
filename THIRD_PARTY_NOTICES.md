@@ -37,6 +37,19 @@ NuGet packages / bundled binaries and were not modified.
 - Project / source for exactly this version (LAME 3.100):
   https://sourceforge.net/projects/lame/files/lame/3.100/
 
+## .NET 10 Runtime (self-contained deployment)
+
+- Files: the self-contained win-x64 deployment includes the .NET runtime from
+  **Microsoft.NETCore.App.Runtime.win-x64 (10.0.12)** and
+  **Microsoft.WindowsDesktop.App.Runtime.win-x64 (10.0.12)**.
+- License: MIT — full text shipped in this distribution as
+  [LICENSE-NETRuntime.txt](LICENSE-NETRuntime.txt)
+  (Copyright (c) .NET Foundation and Contributors)
+- Third-party notices of the .NET runtime are shipped in this distribution as
+  [LICENSE-NETRuntime-ThirdPartyNotices.txt](LICENSE-NETRuntime-ThirdPartyNotices.txt)
+  (copied unmodified from the Microsoft.NETCore.App.Runtime.win-x64 10.0.12 package).
+- Source: https://github.com/dotnet/runtime
+
 ## ELARA
 
 - License: MIT (see LICENSE, based on the original SimpleAudioRecorder by

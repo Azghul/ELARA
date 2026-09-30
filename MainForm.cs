@@ -7,7 +7,7 @@ namespace ELARA;
 
 public sealed class MainForm : Form
 {
-    private const string GitHubUrl = "https://github.com/Azghul/SimpleAudioRecorder";
+    private const string GitHubUrl = "https://github.com/Azghul/ELARA";
     private const string UpstreamGitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
     private const float CardRadius = 18F;
 
@@ -50,6 +50,7 @@ public sealed class MainForm : Form
     private OutputFormat selectedFormat = OutputFormat.Mp3;
     private bool previewMode;
     private bool previewRecording;
+    private bool recordingOperationInProgress;
 
     public MainForm()
     {
@@ -86,6 +87,20 @@ public sealed class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        // Never dispose the capture service while a start/stop/save operation is
+        // still running; the close is simply retried by the user afterwards.
+        if (recordingOperationInProgress)
+        {
+            e.Cancel = true;
+            MessageBox.Show(
+                this,
+                "ELARA is currently starting or saving a recording. Please try again in a moment.",
+                "Please Wait",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
         if (!captureService.IsRecording)
         {
             DisposeTrayIcon();
@@ -471,6 +486,7 @@ public sealed class MainForm : Form
     {
         recordButton.Enabled = false;
         UpdateStatus("Preparing", Color.FromArgb(255, 211, 122), "Opening the Windows audio devices and preparing the recording file.");
+        recordingOperationInProgress = true;
 
         try
         {
@@ -497,6 +513,7 @@ public sealed class MainForm : Form
         }
         finally
         {
+            recordingOperationInProgress = false;
             ApplyVisualState();
         }
     }
@@ -505,6 +522,7 @@ public sealed class MainForm : Form
     {
         recordButton.Enabled = false;
         UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the recording file and cleaning up the recording session.");
+        recordingOperationInProgress = true;
 
         try
         {
@@ -552,6 +570,7 @@ public sealed class MainForm : Form
         finally
         {
             uiTimer.Stop();
+            recordingOperationInProgress = false;
             ApplyVisualState();
         }
     }
