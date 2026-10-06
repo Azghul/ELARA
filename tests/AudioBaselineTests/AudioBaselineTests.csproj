@@ -7,5 +7,10 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../WavUtility.cs" Link="WavUtility.cs" />
+    <Compile Include="../../OutputTypes.cs" Link="OutputTypes.cs" />
+    <Compile Include="../../OutputPathUtility.cs" Link="OutputPathUtility.cs" />
+    <Compile Include="../../VersionText.cs" Link="VersionText.cs" />
+    <Compile Include="../../AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="../../AppPaths.cs" Link="AppPaths.cs" />
   </ItemGroup>
 </Project>

@@ -9,14 +9,16 @@ A lightweight Windows desktop recorder for microphone and system audio.
 - Recording modes: `Both` (system audio + microphone mono mix), `Mic`, `System`
 - Selectable microphone (Windows default + all capture devices)
 - Selectable playback device captured via WASAPI loopback (Windows default + all playback devices)
-- Output formats: MP3 (~160 kbit/s) and PCM WAV
+- Output formats: MP3 (~160 kbit/s) and PCM WAV — chosen in the Save As dialog when a recording starts (a default timestamped file name is offered)
 - All output is 48 kHz mono; Both mixes system audio and microphone at fixed 50/50 headroom
-- Microphone capture requests Windows RAW processing and falls back to the normal default stream when RAW is unavailable
+- Microphone capture requests Windows RAW processing by default and falls back to the normal default stream when RAW is unavailable
+- Optional Windows noise suppression: the microphone stream is categorized as speech and an available Windows noise-suppression effect is requested (never automatic gain or echo cancellation)
 - No automatic gain, loudness maximization or nonlinear saturation is applied
-- Visible device, mode and format selectors in the main window
+- Visible mode and device selectors in the main window
 - Configurable recording location
 - System tray integration (hide to tray, restore, exit)
-- Persistent settings (devices, format, output location)
+- Application icon and version display (v1.0.1)
+- Persistent settings (devices, microphone processing, last used format, output location)
 - MP3-to-WAV rescue if MP3 encoding fails
 - Raw PCM data is preserved in critical failure cases
 - Self-contained win-x64 release (no .NET installation required on the target PC)
@@ -35,7 +37,7 @@ Original copyright/license notices remain preserved.
 
 ## Status
 
-Version 1.0.0
+Version 1.0.1
 
 ## Third-party libraries
 
@@ -74,7 +76,8 @@ Your last selections are remembered across restarts:
 
 - selected microphone
 - selected playback (system audio) device
-- output format (MP3/WAV)
+- microphone processing mode (Raw / Windows noise suppression)
+- last used output format (used to preselect the Save As filter)
 - recording output location
 
 Settings are stored as JSON in the per-user app data folder

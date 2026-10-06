@@ -62,6 +62,7 @@ internal sealed class WasapiCaptureSource : IDisposable
     private readonly short requestedChannels;
     private readonly Action<float> reportPeak;
     private readonly CaptureSessionCoordinator coordinator;
+    private readonly MicrophoneProcessingMode processingMode;
     private readonly ManualResetEventSlim startSignal = new(false);
 
     private Thread? workerThread;
@@ -69,6 +70,12 @@ internal sealed class WasapiCaptureSource : IDisposable
     private Exception? backgroundException;
     private string? resolvedDeviceId;
     private string? resolvedDeviceName;
+
+    /// <summary>True when a matching Windows noise-suppression effect is active on the microphone stream.</summary>
+    public bool IsNoiseSuppressionActive { get; private set; }
+
+    /// <summary>"Deep" or "NoiseSuppression" when a noise-suppression effect is active, otherwise null.</summary>
+    public string? NoiseSuppressionActiveType { get; private set; }
 
     public WasapiCaptureSource(
         string friendlyName,
@@ -79,7 +86,8 @@ internal sealed class WasapiCaptureSource : IDisposable
         short bitsPerSample,
         short requestedChannels,
         Action<float> reportPeak,
-        CaptureSessionCoordinator coordinator)
+        CaptureSessionCoordinator coordinator,
+        MicrophoneProcessingMode processingMode = MicrophoneProcessingMode.Raw)
     {
         this.friendlyName = friendlyName;
         this.kind = kind;
@@ -90,6 +98,9 @@ internal sealed class WasapiCaptureSource : IDisposable
         this.requestedChannels = requestedChannels;
         this.reportPeak = reportPeak;
         this.coordinator = coordinator;
+        this.processingMode = processingMode;
+        IsNoiseSuppressionActive = false;
+        NoiseSuppressionActiveType = null;
     }
 
     public void Prepare()
@@ -220,9 +231,14 @@ internal sealed class WasapiCaptureSource : IDisposable
             AppLogger.Info(
                 $"{friendlyName} capture format active. FormatTag={format.FormatTag}; Channels={format.Channels}; SampleRate={format.SamplesPerSec}; BitsPerSample={format.BitsPerSample}");
 
-            if (kind == WasapiCaptureKind.Microphone && rawActivated)
+            if (kind == WasapiCaptureKind.Microphone)
             {
-                AppLogger.Info("Microphone audio processing. RawRequested=True; RawActivated=True; EffectsChangedByApplication=False");
+                AppLogger.Info(
+                    processingMode == MicrophoneProcessingMode.WindowsNoiseSuppression
+                        ? "Microphone audio processing. RequestedProcessingMode=WindowsNoiseSuppression; RawRequested=False; RawActivated=False; SpeechCategoryRequested=True; EffectsChangedByApplication=True"
+                        : (rawActivated
+                            ? "Microphone audio processing. RequestedProcessingMode=Raw; RawRequested=True; RawActivated=True; SpeechCategoryRequested=False; EffectsChangedByApplication=False"
+                            : "Microphone audio processing. RequestedProcessingMode=Raw; RawRequested=True; RawActivated=False; SpeechCategoryRequested=False; Fallback=Default; EffectsChangedByApplication=False"));
             }
             else if (kind == WasapiCaptureKind.SystemLoopback)
             {
@@ -471,28 +487,42 @@ internal sealed class WasapiCaptureSource : IDisposable
     {
         if (kind == WasapiCaptureKind.Microphone)
         {
-            object? rawClientObject = null;
+            object? client2Object = null;
             try
             {
                 var audioClient2Guid = typeof(IAudioClient2).GUID;
-                device.Activate(ref audioClient2Guid, CLSCTX.All, IntPtr.Zero, out rawClientObject);
-                var rawClient = (IAudioClient2)rawClientObject;
-                var properties = AudioClientProperties.CreateRaw();
-                var result = rawClient.SetClientProperties(ref properties);
+                device.Activate(ref audioClient2Guid, CLSCTX.All, IntPtr.Zero, out client2Object);
+                var client2 = (IAudioClient2)client2Object;
+                var properties = processingMode == MicrophoneProcessingMode.WindowsNoiseSuppression
+                    ? AudioClientProperties.CreateSpeech()
+                    : AudioClientProperties.CreateRaw();
+                var result = client2.SetClientProperties(ref properties);
                 if (result < 0)
                 {
-                    throw new COMException("The microphone endpoint rejected RAW stream properties.", result);
+                    throw new COMException(
+                        processingMode == MicrophoneProcessingMode.WindowsNoiseSuppression
+                            ? "The microphone endpoint rejected the speech stream properties."
+                            : "The microphone endpoint rejected RAW stream properties.",
+                        result);
                 }
 
-                format = InitializeAudioClient(rawClient, flags);
-                rawActivated = true;
-                return rawClient;
+                format = InitializeAudioClient(client2, flags);
+                rawActivated = processingMode == MicrophoneProcessingMode.Raw;
+                return client2;
             }
             catch (Exception ex) when (ex is COMException or InvalidCastException)
             {
-                ReleaseComObject(rawClientObject);
-                AppLogger.Warn(
-                    $"Microphone audio processing. RawRequested=True; RawActivated=False; Fallback=Default; HResult=0x{ex.HResult:X8}; Reason={ex.Message}");
+                ReleaseComObject(client2Object);
+                if (processingMode == MicrophoneProcessingMode.WindowsNoiseSuppression)
+                {
+                    AppLogger.Warn(
+                        $"Microphone audio processing. RequestedProcessingMode=WindowsNoiseSuppression; RawRequested=False; RawActivated=False; SpeechCategoryRequested=True; SpeechPropertiesRejected=True; Fallback=DefaultSharedMode; HResult=0x{ex.HResult:X8}; Reason={ex.Message}");
+                }
+                else
+                {
+                    AppLogger.Warn(
+                        $"Microphone audio processing. RawRequested=True; RawActivated=False; Fallback=Default; HResult=0x{ex.HResult:X8}; Reason={ex.Message}");
+                }
             }
         }
 
@@ -531,13 +561,16 @@ internal sealed class WasapiCaptureSource : IDisposable
                 return;
             }
 
+            var requestedProcessingMode = processingMode.ToString();
             var reportedEffects = new HashSet<Guid>();
+            var parsedEffects = new List<AudioEffect>(checked((int)effectCount));
             var effectSize = Marshal.SizeOf<AudioEffect>();
             for (var index = 0U; index < effectCount; index++)
             {
                 var effectPointer = IntPtr.Add(effectsPointer, checked((int)(index * effectSize)));
                 var effect = Marshal.PtrToStructure<AudioEffect>(effectPointer);
                 reportedEffects.Add(effect.Id);
+                parsedEffects.Add(effect);
                 AppLogger.Info(
                     $"Microphone APO effect. Type={GetAudioEffectName(effect.Id)}; Id={effect.Id}; State={effect.State}; CanSetState={effect.CanSetState}; Action=None");
             }
@@ -547,10 +580,17 @@ internal sealed class WasapiCaptureSource : IDisposable
                 AppLogger.Info("Microphone APO effect discovery returned no effects for the current stream; no effect state was changed.");
             }
 
-            LogRequestedEffectSummary("NoiseSuppression", NoiseSuppressionEffectId, reportedEffects);
-            LogRequestedEffectSummary("AcousticEchoCancellation", AcousticEchoCancellationEffectId, reportedEffects);
-            LogRequestedEffectSummary("AutomaticGainControl", AutomaticGainControlEffectId, reportedEffects);
-            LogRequestedEffectSummary("DeepNoiseSuppression", DeepNoiseSuppressionEffectId, reportedEffects);
+            LogRequestedEffectSummary("NoiseSuppression", NoiseSuppressionEffectId, reportedEffects, requestedProcessingMode);
+            LogRequestedEffectSummary("AcousticEchoCancellation", AcousticEchoCancellationEffectId, reportedEffects, requestedProcessingMode);
+            LogRequestedEffectSummary("AutomaticGainControl", AutomaticGainControlEffectId, reportedEffects, requestedProcessingMode);
+            LogRequestedEffectSummary("DeepNoiseSuppression", DeepNoiseSuppressionEffectId, reportedEffects, requestedProcessingMode);
+
+            // Only the microphone processing preference may change effect state; RAW
+            // mode stays strictly read-only ("EffectsChangedByApplication=False").
+            if (processingMode == MicrophoneProcessingMode.WindowsNoiseSuppression)
+            {
+                TryEnableNoiseSuppression(effectsManager, parsedEffects);
+            }
         }
         catch (COMException ex)
         {
@@ -572,10 +612,75 @@ internal sealed class WasapiCaptureSource : IDisposable
         }
     }
 
-    private static void LogRequestedEffectSummary(string name, Guid effectId, HashSet<Guid> reportedEffects)
+    private static void LogRequestedEffectSummary(
+        string name,
+        Guid effectId,
+        HashSet<Guid> reportedEffects,
+        string requestedProcessingMode)
     {
         AppLogger.Info(
-            $"Microphone APO effect summary. Type={name}; ReportedForCurrentStream={reportedEffects.Contains(effectId)}; Action=None");
+            $"Microphone APO effect summary. RequestedProcessingMode={requestedProcessingMode}; Type={name}; ReportedForCurrentStream={reportedEffects.Contains(effectId)}; Action=None");
+    }
+
+    private void TryEnableNoiseSuppression(IAudioEffectsManager effectsManager, IReadOnlyList<AudioEffect> effects)
+    {
+        // Priority: Deep Noise Suppression, then regular Noise Suppression. Only the
+        // matching noise-suppression effect may be flipped on; Automatic Gain Control,
+        // Acoustic Echo Cancellation and every other effect stay untouched. A missing
+        // or non-controllable effect never blocks recording (Windows speech processing
+        // keeps running); it is simply logged.
+        var candidates = new[]
+        {
+            (DeepNoiseSuppressionEffectId, "Deep"),
+            (NoiseSuppressionEffectId, "NoiseSuppression"),
+        };
+
+        foreach (var (candidateEffectId, typeName) in candidates)
+        {
+            if (!effects.Any(candidate => candidate.Id == candidateEffectId))
+            {
+                AppLogger.Info(
+                    $"Microphone noise suppression. RequestedProcessingMode=WindowsNoiseSuppression; NoiseSuppressionType={typeName}; NoiseSuppressionReported=False; NoiseSuppressionState=Unknown; CanSetState=False; Action=None");
+                continue;
+            }
+
+            var effect = effects.First(candidate => candidate.Id == candidateEffectId);
+
+            var stateName = effect.State == AudioEffectState.On ? "On" : "Off";
+            if (effect.State == AudioEffectState.On)
+            {
+                IsNoiseSuppressionActive = true;
+                NoiseSuppressionActiveType = typeName;
+                AppLogger.Info(
+                    $"Microphone noise suppression. RequestedProcessingMode=WindowsNoiseSuppression; NoiseSuppressionType={typeName}; NoiseSuppressionReported=True; NoiseSuppressionState=On; CanSetState={effect.CanSetState}; Action=None");
+                return;
+            }
+
+            if (!effect.CanSetState)
+            {
+                AppLogger.Info(
+                    $"Microphone noise suppression. RequestedProcessingMode=WindowsNoiseSuppression; NoiseSuppressionType={typeName}; NoiseSuppressionReported=True; NoiseSuppressionState={stateName}; CanSetState=False; Action=None");
+                continue;
+            }
+
+            var stateTarget = candidateEffectId;
+            var setResult = effectsManager.SetAudioEffectState(ref stateTarget, AudioEffectState.On);
+            if (setResult < 0)
+            {
+                AppLogger.Warn(
+                    $"Microphone noise suppression could not be enabled. NoiseSuppressionType={typeName}; HResult=0x{setResult:X8}; Action=Failed");
+                continue;
+            }
+
+            IsNoiseSuppressionActive = true;
+            NoiseSuppressionActiveType = typeName;
+            AppLogger.Info(
+                $"Microphone noise suppression. RequestedProcessingMode=WindowsNoiseSuppression; NoiseSuppressionType={typeName}; NoiseSuppressionReported=True; NoiseSuppressionState=On; CanSetState=True; Action=EnabledByELARA");
+            return;
+        }
+
+        AppLogger.Info(
+            "Microphone noise suppression. RequestedProcessingMode=WindowsNoiseSuppression; NoiseSuppressionReported=False; Action=None; Fallback=WindowsSpeechProcessing");
     }
 
     private static string GetAudioEffectName(Guid effectId)

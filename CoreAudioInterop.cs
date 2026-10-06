@@ -134,6 +134,7 @@ internal enum AudioEffectState
 internal enum AudioStreamCategory
 {
     Other = 0,
+    Speech = 2,
 }
 
 [Flags]
@@ -162,6 +163,17 @@ internal struct AudioClientProperties
             IsOffload = false,
             Category = AudioStreamCategory.Other,
             Options = AudioClientStreamOptions.Raw,
+        };
+    }
+
+    public static AudioClientProperties CreateSpeech()
+    {
+        return new AudioClientProperties
+        {
+            Size = (uint)Marshal.SizeOf<AudioClientProperties>(),
+            IsOffload = false,
+            Category = AudioStreamCategory.Speech,
+            Options = AudioClientStreamOptions.None,
         };
     }
 }

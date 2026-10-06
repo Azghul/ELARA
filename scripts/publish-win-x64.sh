@@ -34,6 +34,10 @@ cp "${repo_root}/LICENSE-NETRuntime.txt" "${publish_dir}/LICENSE-NETRuntime.txt"
 cp "${repo_root}/LICENSE-NETRuntime-ThirdPartyNotices.txt" "${publish_dir}/LICENSE-NETRuntime-ThirdPartyNotices.txt"
 cp "${repo_root}/LICENSE-DOTNET-LIBRARY.txt" "${publish_dir}/LICENSE-DOTNET-LIBRARY.txt"
 
+# Include the ELARA application icon (used at runtime for the window/tray/About).
+mkdir -p "${publish_dir}/assets"
+cp "${repo_root}/assets/elara.ico" "${publish_dir}/assets/elara.ico"
+
 echo
 echo "=== Publish output (${publish_dir}) ==="
 ls -la "${publish_dir}"
@@ -43,6 +47,7 @@ echo "=== Required files check ==="
 required_files=(
     "ELARA.exe"
     "ELARA.dll"
+    "assets/elara.ico"
     "LICENSE-NAudio.Core.txt"
     "LICENSE-NAudio.Lame.txt"
     "NAudio.Lame.dll"
@@ -94,6 +99,24 @@ for file in "${forbidden_files[@]}"; do
     fi
 done
 
+# Release hygiene: never ship logs, settings, recordings, temporary PCM data or
+# stray build artifacts in the ZIP.
+forbidden_patterns=(
+    "*.log"
+    "settings.json"
+    "*.pcm"
+    "*.tmp"
+    "Recordings"
+)
+for pattern in "${forbidden_patterns[@]}"; do
+    if find "${publish_dir}" -iname "${pattern}" -print -quit | grep -q .; then
+        echo "FORBIDDEN PRESENT ${pattern}"
+        missing=1
+    else
+        echo "OK      ${pattern} absent"
+    fi
+done
+
 if [[ "${missing}" -ne 0 ]]; then
     echo
     echo "ERROR: publish output is incomplete, aborting." >&2
@@ -122,7 +145,7 @@ fi
 echo
 echo "=== ZIP contents ==="
 if command -v unzip >/dev/null 2>&1; then
-    unzip -l "${zip_path}" | head -30
+    unzip -l "${zip_path}" | sed -n '1,30p'
 else
     python3 - "${zip_path}" <<'PY'
 import sys, zipfile

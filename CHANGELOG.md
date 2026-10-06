@@ -1,7 +1,16 @@
 # Changelog
 
-# Unreleased
+# 1.0.1
 
+- Improved audio capture/mixing quality
+- Synchronized microphone/system capture
+- RAW microphone baseline
+- Optional Windows noise suppression
+- Mono WAV/MP3 meeting mix
+- Save As with filename and format selection
+- Application icon
+- Version display
+- Selector popup positioning fix
 - Microphone capture requests Windows RAW processing and falls back safely to the
   normal default stream when RAW is unavailable
 - Both-mode capture uses a shared start barrier, shared stop signal and QPC-based

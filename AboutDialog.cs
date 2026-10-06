@@ -18,6 +18,7 @@ internal sealed class AboutDialog : Form
         ClientSize = new Size(420, 320);
         BackColor = Color.FromArgb(15, 19, 40);
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+        Icon = AppIcon.Load();
 
         var title = new Label
         {
@@ -26,6 +27,14 @@ internal sealed class AboutDialog : Form
             ForeColor = Color.FromArgb(247, 248, 255),
             Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold, GraphicsUnit.Point),
             Location = new Point(22, 16),
+        };
+
+        var versionLine = new Label
+        {
+            Text = AppVersion.DisplayLabel,
+            AutoSize = true,
+            ForeColor = Color.FromArgb(150, 158, 198),
+            Location = new Point(28 + title.PreferredWidth, 22),
         };
 
         var subtitle = new Label
@@ -131,6 +140,7 @@ internal sealed class AboutDialog : Form
         closeButton.FlatAppearance.BorderSize = 0;
 
         Controls.Add(title);
+        Controls.Add(versionLine);
         Controls.Add(subtitle);
         Controls.Add(description);
         Controls.Add(originsNotice);
