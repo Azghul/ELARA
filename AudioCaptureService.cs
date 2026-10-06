@@ -77,6 +77,7 @@ public sealed class AudioCaptureService : IDisposable
 
     private WasapiCaptureSource? microphoneSource;
     private WasapiCaptureSource? systemSource;
+    private CaptureSessionCoordinator? captureCoordinator;
     private string? tempDirectory;
     private string? tempMicrophonePath;
     private string? tempSystemPath;
@@ -205,6 +206,9 @@ public sealed class AudioCaptureService : IDisposable
 
         try
         {
+            var sourceCount = mode == CaptureMode.Both ? 2 : 1;
+            captureCoordinator = new CaptureSessionCoordinator(sourceCount);
+
             if (mode is CaptureMode.Both or CaptureMode.Microphone)
             {
                 microphoneSource = new WasapiCaptureSource(
@@ -215,10 +219,9 @@ public sealed class AudioCaptureService : IDisposable
                     TargetSampleRate,
                     TargetCaptureBitsPerSample,
                     MicrophoneRequestedChannels,
-                    ReportPeak);
-                microphoneSource.Start();
-                ActiveMicrophoneDeviceId = microphoneSource.ResolvedDeviceId;
-                ActiveMicrophoneDeviceName = microphoneSource.ResolvedDeviceName;
+                    ReportPeak,
+                    captureCoordinator);
+                microphoneSource.Prepare();
             }
 
             if (mode is CaptureMode.Both or CaptureMode.System)
@@ -231,8 +234,32 @@ public sealed class AudioCaptureService : IDisposable
                     TargetSampleRate,
                     TargetCaptureBitsPerSample,
                     SystemRequestedChannels,
-                    ReportPeak);
-                systemSource.Start();
+                    ReportPeak,
+                    captureCoordinator);
+                systemSource.Prepare();
+            }
+
+            if (!captureCoordinator.WaitUntilPrepared(TimeSpan.FromSeconds(8)))
+            {
+                throw new TimeoutException("Timed out while preparing the capture sources.");
+            }
+
+            microphoneSource?.EnsurePrepared();
+            systemSource?.EnsurePrepared();
+
+            AppLogger.Info("All capture sources prepared; releasing the shared start barrier.");
+            captureCoordinator.ReleaseStart();
+            microphoneSource?.WaitUntilStarted();
+            systemSource?.WaitUntilStarted();
+
+            if (microphoneSource is not null)
+            {
+                ActiveMicrophoneDeviceId = microphoneSource.ResolvedDeviceId;
+                ActiveMicrophoneDeviceName = microphoneSource.ResolvedDeviceName;
+            }
+
+            if (systemSource is not null)
+            {
                 ActiveSystemDeviceId = systemSource.ResolvedDeviceId;
                 ActiveSystemDeviceName = systemSource.ResolvedDeviceName;
             }
@@ -304,6 +331,12 @@ public sealed class AudioCaptureService : IDisposable
 
         microphoneSource = null;
         systemSource = null;
+        if (!anyWorkerMayStillRun)
+        {
+            captureCoordinator?.Dispose();
+        }
+
+        captureCoordinator = null;
         ActiveMicrophoneDeviceId = null;
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
@@ -334,10 +367,13 @@ public sealed class AudioCaptureService : IDisposable
             throw new InvalidOperationException("There is no active recording to stop.");
         }
 
-        // PHASE 1: stop every active capture source independently so that a failure on
-        // one source never prevents the other source from being stopped and flushed.
+        // PHASE 1: signal every active capture source together, then join each worker
+        // independently so that a failure on one never prevents the other from flushing.
         var stopErrors = new List<Exception>();
         var timedOut = false;
+
+        // Both workers observe the same stop edge and drain concurrently before they join.
+        captureCoordinator?.RequestStop();
 
         if (microphoneSource is not null)
         {
@@ -553,6 +589,9 @@ public sealed class AudioCaptureService : IDisposable
         // COM objects and closes the PCM file once the thread terminates.
         microphoneSource = null;
         systemSource = null;
+        // Timed-out workers still access the shared coordinator until their finally
+        // blocks complete, so it must not be disposed here.
+        captureCoordinator = null;
         ActiveMicrophoneDeviceId = null;
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
@@ -583,20 +622,24 @@ public sealed class AudioCaptureService : IDisposable
             case CaptureMode.Both:
                 if (format == OutputFormat.Mp3)
                 {
-                    Mp3Utility.WriteStereoMp3FromMonoPcm(
-                        tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
-                        tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
-                        path,
-                        TargetSampleRate);
-                }
-                else
-                {
-                    WavUtility.WriteStereoWavFromMonoPcm(
+                    Mp3Utility.WriteMonoMixMp3FromMonoPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         path,
                         TargetSampleRate,
-                        TargetOutputBitsPerSample);
+                        systemSource?.FirstQpcPosition,
+                        microphoneSource?.FirstQpcPosition);
+                }
+                else
+                {
+                    WavUtility.WriteMonoMixWavFromMonoPcm(
+                        tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
+                        tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
+                        path,
+                        TargetSampleRate,
+                        TargetOutputBitsPerSample,
+                        systemSource?.FirstQpcPosition,
+                        microphoneSource?.FirstQpcPosition);
                 }
 
                 break;
@@ -662,6 +705,8 @@ public sealed class AudioCaptureService : IDisposable
         systemSource?.Dispose();
         microphoneSource = null;
         systemSource = null;
+        captureCoordinator?.Dispose();
+        captureCoordinator = null;
         ActiveMicrophoneDeviceId = null;
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;

@@ -6,11 +6,13 @@ A lightweight Windows desktop recorder for microphone and system audio.
 
 ## Features
 
-- Recording modes: `Both` (system audio left, microphone right), `Mic`, `System`
+- Recording modes: `Both` (system audio + microphone mono mix), `Mic`, `System`
 - Selectable microphone (Windows default + all capture devices)
 - Selectable playback device captured via WASAPI loopback (Windows default + all playback devices)
 - Output formats: MP3 (~160 kbit/s) and PCM WAV
-- Both mode records stereo (left = system audio, right = microphone)
+- All output is 48 kHz mono; Both mixes system audio and microphone at fixed 50/50 headroom
+- Microphone capture requests Windows RAW processing and falls back to the normal default stream when RAW is unavailable
+- No automatic gain, loudness maximization or nonlinear saturation is applied
 - Visible device, mode and format selectors in the main window
 - Configurable recording location
 - System tray integration (hide to tray, restore, exit)

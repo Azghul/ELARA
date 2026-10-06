@@ -9,8 +9,50 @@ internal enum WasapiCaptureKind
     SystemLoopback,
 }
 
+internal sealed class CaptureSessionCoordinator : IDisposable
+{
+    private readonly CountdownEvent preparationBarrier;
+    private readonly ManualResetEventSlim startSignal = new(false);
+    private readonly ManualResetEventSlim stopSignal = new(false);
+
+    public CaptureSessionCoordinator(int sourceCount)
+    {
+        preparationBarrier = new CountdownEvent(sourceCount);
+    }
+
+    public bool StopRequested => stopSignal.IsSet;
+
+    public void SignalPrepared() => preparationBarrier.Signal();
+
+    public bool WaitUntilPrepared(TimeSpan timeout) => preparationBarrier.Wait(timeout);
+
+    public void ReleaseStart() => startSignal.Set();
+
+    public bool WaitForStart()
+    {
+        var signaled = WaitHandle.WaitAny(new[] { startSignal.WaitHandle, stopSignal.WaitHandle });
+        return signaled == 0 && !stopSignal.IsSet;
+    }
+
+    public void RequestStop() => stopSignal.Set();
+
+    public bool WaitForStop(int millisecondsTimeout) => stopSignal.Wait(millisecondsTimeout);
+
+    public void Dispose()
+    {
+        preparationBarrier.Dispose();
+        startSignal.Dispose();
+        stopSignal.Dispose();
+    }
+}
+
 internal sealed class WasapiCaptureSource : IDisposable
 {
+    private static readonly Guid AcousticEchoCancellationEffectId = new("6f64adbe-8211-11e2-8c70-2c27d7f001fa");
+    private static readonly Guid NoiseSuppressionEffectId = new("6f64adbf-8211-11e2-8c70-2c27d7f001fa");
+    private static readonly Guid AutomaticGainControlEffectId = new("6f64adc0-8211-11e2-8c70-2c27d7f001fa");
+    private static readonly Guid DeepNoiseSuppressionEffectId = new("6f64add0-8211-11e2-8c70-2c27d7f001fa");
+
     private readonly string friendlyName;
     private readonly WasapiCaptureKind kind;
     private readonly string? preferredDeviceId;
@@ -19,8 +61,8 @@ internal sealed class WasapiCaptureSource : IDisposable
     private readonly short bitsPerSample;
     private readonly short requestedChannels;
     private readonly Action<float> reportPeak;
+    private readonly CaptureSessionCoordinator coordinator;
     private readonly ManualResetEventSlim startSignal = new(false);
-    private readonly ManualResetEventSlim stopSignal = new(false);
 
     private Thread? workerThread;
     private Exception? startupException;
@@ -36,7 +78,8 @@ internal sealed class WasapiCaptureSource : IDisposable
         int sampleRate,
         short bitsPerSample,
         short requestedChannels,
-        Action<float> reportPeak)
+        Action<float> reportPeak,
+        CaptureSessionCoordinator coordinator)
     {
         this.friendlyName = friendlyName;
         this.kind = kind;
@@ -46,9 +89,10 @@ internal sealed class WasapiCaptureSource : IDisposable
         this.bitsPerSample = bitsPerSample;
         this.requestedChannels = requestedChannels;
         this.reportPeak = reportPeak;
+        this.coordinator = coordinator;
     }
 
-    public void Start()
+    public void Prepare()
     {
         if (workerThread is not null)
         {
@@ -59,14 +103,26 @@ internal sealed class WasapiCaptureSource : IDisposable
         backgroundException = null;
         resolvedDeviceId = null;
         resolvedDeviceName = null;
+        FirstQpcPosition = null;
         workerThread = new Thread(CaptureThreadProc)
         {
             IsBackground = true,
             Name = $"ELARA-{friendlyName}",
         };
-        AppLogger.Info($"{friendlyName} capture thread starting. PreferredDeviceId={(preferredDeviceId ?? "<default>")}; TempFile={tempFilePath}");
+        AppLogger.Info($"{friendlyName} capture thread preparing. PreferredDeviceId={(preferredDeviceId ?? "<default>")}; TempFile={tempFilePath}");
         workerThread.Start();
+    }
 
+    public void EnsurePrepared()
+    {
+        if (startupException is not null)
+        {
+            throw startupException;
+        }
+    }
+
+    public void WaitUntilStarted()
+    {
         if (!startSignal.Wait(TimeSpan.FromSeconds(8)))
         {
             throw new TimeoutException($"Timed out while starting {friendlyName} capture.");
@@ -82,6 +138,8 @@ internal sealed class WasapiCaptureSource : IDisposable
 
     public string? ResolvedDeviceName => resolvedDeviceName;
 
+    public long? FirstQpcPosition { get; private set; }
+
     public void Stop()
     {
         if (workerThread is null)
@@ -89,7 +147,7 @@ internal sealed class WasapiCaptureSource : IDisposable
             return;
         }
 
-        stopSignal.Set();
+        coordinator.RequestStop();
 
         if (!workerThread.Join(TimeSpan.FromSeconds(5)))
         {
@@ -121,7 +179,6 @@ internal sealed class WasapiCaptureSource : IDisposable
         if (workerThread is null)
         {
             startSignal.Dispose();
-            stopSignal.Dispose();
         }
     }
 
@@ -133,6 +190,7 @@ internal sealed class WasapiCaptureSource : IDisposable
         IAudioCaptureClient? captureClient = null;
         FileStream? fileStream = null;
         BinaryWriter? writer = null;
+        var preparationSignaled = false;
 
         try
         {
@@ -145,10 +203,6 @@ internal sealed class WasapiCaptureSource : IDisposable
             resolvedDeviceName = AudioInputDeviceCatalog.GetFriendlyName(device);
             AppLogger.Info($"{friendlyName} capture using endpoint '{resolvedDeviceName}' [{resolvedDeviceId}]");
 
-            var audioClientGuid = typeof(IAudioClient).GUID;
-            device.Activate(ref audioClientGuid, CLSCTX.All, IntPtr.Zero, out var audioClientObject);
-            audioClient = (IAudioClient)audioClientObject;
-
             var flags = AudioClientStreamFlags.AutoConvertPcm
                 | AudioClientStreamFlags.SourceDefaultQuality
                 | AudioClientStreamFlags.NoPersist;
@@ -158,9 +212,27 @@ internal sealed class WasapiCaptureSource : IDisposable
                 flags |= AudioClientStreamFlags.Loopback;
             }
 
-            var format = InitializeAudioClient(audioClient, flags);
+            audioClient = ActivateAndInitializeAudioClient(
+                device,
+                flags,
+                out var format,
+                out var rawActivated);
             AppLogger.Info(
                 $"{friendlyName} capture format active. FormatTag={format.FormatTag}; Channels={format.Channels}; SampleRate={format.SamplesPerSec}; BitsPerSample={format.BitsPerSample}");
+
+            if (kind == WasapiCaptureKind.Microphone && rawActivated)
+            {
+                AppLogger.Info("Microphone audio processing. RawRequested=True; RawActivated=True; EffectsChangedByApplication=False");
+            }
+            else if (kind == WasapiCaptureKind.SystemLoopback)
+            {
+                AppLogger.Info("System loopback audio processing. RawRequested=False; RawActivated=False; Mode=DefaultLoopback; EffectsChangedByApplication=False");
+            }
+
+            if (kind == WasapiCaptureKind.Microphone)
+            {
+                LogMicrophoneAudioEffects(audioClient);
+            }
 
             var captureClientGuid = typeof(IAudioCaptureClient).GUID;
             audioClient.GetService(ref captureClientGuid, out var captureClientObject);
@@ -169,14 +241,24 @@ internal sealed class WasapiCaptureSource : IDisposable
             fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.Read);
             writer = new BinaryWriter(fileStream);
 
+            coordinator.SignalPrepared();
+            preparationSignaled = true;
+            AppLogger.Info($"{friendlyName} capture prepared and waiting at the shared start barrier.");
+
+            if (!coordinator.WaitForStart())
+            {
+                AppLogger.Info($"{friendlyName} capture stopped before the shared start barrier was released.");
+                return;
+            }
+
             audioClient.Start();
             AppLogger.Info($"{friendlyName} capture started successfully.");
             startSignal.Set();
 
-            while (!stopSignal.IsSet)
+            while (!coordinator.StopRequested)
             {
                 ReadAvailablePackets(captureClient, writer, (short)format.Channels, (short)format.BitsPerSample);
-                stopSignal.Wait(6);
+                coordinator.WaitForStop(6);
             }
 
             ReadAvailablePackets(captureClient, writer, (short)format.Channels, (short)format.BitsPerSample);
@@ -200,6 +282,11 @@ internal sealed class WasapiCaptureSource : IDisposable
         }
         finally
         {
+            if (!preparationSignaled)
+            {
+                coordinator.SignalPrepared();
+            }
+
             writer?.Dispose();
             fileStream?.Dispose();
 
@@ -279,10 +366,22 @@ internal sealed class WasapiCaptureSource : IDisposable
                 out var frameCount,
                 out var flags,
                 out _,
-                out _);
+                out var qpcPosition);
 
             try
             {
+                if (FirstQpcPosition is null
+                    && (flags & AudioClientBufferFlags.TimestampError) == 0)
+                {
+                    FirstQpcPosition = qpcPosition;
+                    AppLogger.Info($"{friendlyName} first capture timestamp. Qpc100ns={qpcPosition}");
+                }
+
+                if ((flags & AudioClientBufferFlags.DataDiscontinuity) != 0)
+                {
+                    AppLogger.Warn($"{friendlyName} capture reported a data discontinuity.");
+                }
+
                 WritePacket(writer, dataPointer, frameCount, flags, channels, bitsPerSample);
             }
             finally
@@ -364,6 +463,146 @@ internal sealed class WasapiCaptureSource : IDisposable
         return pcmFormat;
     }
 
+    private IAudioClient ActivateAndInitializeAudioClient(
+        IMMDevice device,
+        AudioClientStreamFlags flags,
+        out WaveFormatEx format,
+        out bool rawActivated)
+    {
+        if (kind == WasapiCaptureKind.Microphone)
+        {
+            object? rawClientObject = null;
+            try
+            {
+                var audioClient2Guid = typeof(IAudioClient2).GUID;
+                device.Activate(ref audioClient2Guid, CLSCTX.All, IntPtr.Zero, out rawClientObject);
+                var rawClient = (IAudioClient2)rawClientObject;
+                var properties = AudioClientProperties.CreateRaw();
+                var result = rawClient.SetClientProperties(ref properties);
+                if (result < 0)
+                {
+                    throw new COMException("The microphone endpoint rejected RAW stream properties.", result);
+                }
+
+                format = InitializeAudioClient(rawClient, flags);
+                rawActivated = true;
+                return rawClient;
+            }
+            catch (Exception ex) when (ex is COMException or InvalidCastException)
+            {
+                ReleaseComObject(rawClientObject);
+                AppLogger.Warn(
+                    $"Microphone audio processing. RawRequested=True; RawActivated=False; Fallback=Default; HResult=0x{ex.HResult:X8}; Reason={ex.Message}");
+            }
+        }
+
+        var audioClientGuid = typeof(IAudioClient).GUID;
+        device.Activate(ref audioClientGuid, CLSCTX.All, IntPtr.Zero, out var audioClientObject);
+        var defaultClient = (IAudioClient)audioClientObject;
+        try
+        {
+            format = InitializeAudioClient(defaultClient, flags);
+            rawActivated = false;
+            return defaultClient;
+        }
+        catch
+        {
+            ReleaseComObject(defaultClient);
+            throw;
+        }
+    }
+
+    private void LogMicrophoneAudioEffects(IAudioClient audioClient)
+    {
+        IAudioEffectsManager? effectsManager = null;
+        IntPtr effectsPointer = IntPtr.Zero;
+
+        try
+        {
+            var effectsManagerGuid = typeof(IAudioEffectsManager).GUID;
+            audioClient.GetService(ref effectsManagerGuid, out var effectsManagerObject);
+            effectsManager = (IAudioEffectsManager)effectsManagerObject;
+
+            var result = effectsManager.GetAudioEffects(out effectsPointer, out var effectCount);
+            if (result < 0)
+            {
+                AppLogger.Warn(
+                    $"Microphone APO effect discovery failed. HResult=0x{result:X8}; no effect state was changed.");
+                return;
+            }
+
+            var reportedEffects = new HashSet<Guid>();
+            var effectSize = Marshal.SizeOf<AudioEffect>();
+            for (var index = 0U; index < effectCount; index++)
+            {
+                var effectPointer = IntPtr.Add(effectsPointer, checked((int)(index * effectSize)));
+                var effect = Marshal.PtrToStructure<AudioEffect>(effectPointer);
+                reportedEffects.Add(effect.Id);
+                AppLogger.Info(
+                    $"Microphone APO effect. Type={GetAudioEffectName(effect.Id)}; Id={effect.Id}; State={effect.State}; CanSetState={effect.CanSetState}; Action=None");
+            }
+
+            if (effectCount == 0)
+            {
+                AppLogger.Info("Microphone APO effect discovery returned no effects for the current stream; no effect state was changed.");
+            }
+
+            LogRequestedEffectSummary("NoiseSuppression", NoiseSuppressionEffectId, reportedEffects);
+            LogRequestedEffectSummary("AcousticEchoCancellation", AcousticEchoCancellationEffectId, reportedEffects);
+            LogRequestedEffectSummary("AutomaticGainControl", AutomaticGainControlEffectId, reportedEffects);
+            LogRequestedEffectSummary("DeepNoiseSuppression", DeepNoiseSuppressionEffectId, reportedEffects);
+        }
+        catch (COMException ex)
+        {
+            AppLogger.Info(
+                $"Microphone APO effect discovery is unavailable on this Windows version or endpoint. HResult=0x{ex.HResult:X8}; no effect state was changed.");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"Microphone APO effect discovery failed without changing effect state. {ex.Message}");
+        }
+        finally
+        {
+            if (effectsPointer != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(effectsPointer);
+            }
+
+            ReleaseComObject(effectsManager);
+        }
+    }
+
+    private static void LogRequestedEffectSummary(string name, Guid effectId, HashSet<Guid> reportedEffects)
+    {
+        AppLogger.Info(
+            $"Microphone APO effect summary. Type={name}; ReportedForCurrentStream={reportedEffects.Contains(effectId)}; Action=None");
+    }
+
+    private static string GetAudioEffectName(Guid effectId)
+    {
+        if (effectId == NoiseSuppressionEffectId)
+        {
+            return "NoiseSuppression";
+        }
+
+        if (effectId == AcousticEchoCancellationEffectId)
+        {
+            return "AcousticEchoCancellation";
+        }
+
+        if (effectId == AutomaticGainControlEffectId)
+        {
+            return "AutomaticGainControl";
+        }
+
+        if (effectId == DeepNoiseSuppressionEffectId)
+        {
+            return "DeepNoiseSuppression";
+        }
+
+        return "OtherOrVendorSpecific";
+    }
+
     private static void WriteSilence(BinaryWriter writer, int frameCount)
     {
         for (var index = 0; index < frameCount; index++)
@@ -382,7 +621,6 @@ internal sealed class WasapiCaptureSource : IDisposable
         }
 
         float sampleSum = 0F;
-        var activeChannels = 0;
 
         for (var channelIndex = 0; channelIndex < channels; channelIndex++)
         {
@@ -391,19 +629,10 @@ internal sealed class WasapiCaptureSource : IDisposable
                 ? ReadFloat32(buffer, sampleOffset)
                 : ReadInt16(buffer, sampleOffset) / 32768F;
 
-            if (Math.Abs(sample) > 0.0001F)
-            {
-                sampleSum += sample;
-                activeChannels++;
-            }
+            sampleSum += sample;
         }
 
-        if (activeChannels == 0)
-        {
-            return 0F;
-        }
-
-        return Math.Clamp(sampleSum / activeChannels, -1F, 1F);
+        return Math.Clamp(sampleSum / channels, -1F, 1F);
     }
 
     private static short ReadInt16(byte[] buffer, int offset)

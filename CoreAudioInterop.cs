@@ -125,6 +125,58 @@ internal enum AudioClientBufferFlags : uint
     TimestampError = 0x4,
 }
 
+internal enum AudioEffectState
+{
+    Off = 0,
+    On = 1,
+}
+
+internal enum AudioStreamCategory
+{
+    Other = 0,
+}
+
+[Flags]
+internal enum AudioClientStreamOptions : uint
+{
+    None = 0,
+    Raw = 0x1,
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct AudioClientProperties
+{
+    public uint Size;
+
+    [MarshalAs(UnmanagedType.Bool)]
+    public bool IsOffload;
+
+    public AudioStreamCategory Category;
+    public AudioClientStreamOptions Options;
+
+    public static AudioClientProperties CreateRaw()
+    {
+        return new AudioClientProperties
+        {
+            Size = (uint)Marshal.SizeOf<AudioClientProperties>(),
+            IsOffload = false,
+            Category = AudioStreamCategory.Other,
+            Options = AudioClientStreamOptions.Raw,
+        };
+    }
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct AudioEffect
+{
+    public Guid Id;
+
+    [MarshalAs(UnmanagedType.Bool)]
+    public bool CanSetState;
+
+    public AudioEffectState State;
+}
+
 internal enum AudioClientShareMode
 {
     Shared = 0,
@@ -314,6 +366,25 @@ internal interface IAudioClient
 }
 
 [ComImport]
+[Guid("726778CD-F60A-4EDA-82DE-E47610CD78AA")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioClient2 : IAudioClient
+{
+    [PreserveSig]
+    int IsOffloadCapable(AudioStreamCategory category, [MarshalAs(UnmanagedType.Bool)] out bool isOffloadCapable);
+
+    [PreserveSig]
+    int SetClientProperties(ref AudioClientProperties properties);
+
+    [PreserveSig]
+    int GetBufferSizeLimits(
+        IntPtr format,
+        [MarshalAs(UnmanagedType.Bool)] bool eventDriven,
+        out long minimumBufferDuration,
+        out long maximumBufferDuration);
+}
+
+[ComImport]
 [Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 internal interface IAudioCaptureClient
@@ -328,4 +399,22 @@ internal interface IAudioCaptureClient
     void ReleaseBuffer(int numFramesRead);
 
     void GetNextPacketSize(out int numFramesInNextPacket);
+}
+
+[ComImport]
+[Guid("4460B3AE-4B44-4527-8676-7548A8ACD260")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioEffectsManager
+{
+    [PreserveSig]
+    int RegisterAudioEffectsChangedNotificationCallback(IntPtr client);
+
+    [PreserveSig]
+    int UnregisterAudioEffectsChangedNotificationCallback(IntPtr client);
+
+    [PreserveSig]
+    int GetAudioEffects(out IntPtr effects, out uint effectCount);
+
+    [PreserveSig]
+    int SetAudioEffectState(ref Guid effectId, AudioEffectState state);
 }

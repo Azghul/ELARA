@@ -20,6 +20,9 @@
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <None Include="LICENSE-DOTNET-LIBRARY.txt" CopyToOutputDirectory="PreserveNewest" Link="LICENSE-DOTNET-LIBRARY.txt" />
   </ItemGroup>
 </Project>

@@ -1,5 +1,15 @@
 # Changelog
 
+# Unreleased
+
+- Microphone capture requests Windows RAW processing and falls back safely to the
+  normal default stream when RAW is unavailable
+- Both-mode capture uses a shared start barrier, shared stop signal and QPC-based
+  start alignment before producing a 48 kHz mono mix
+- Removed automatic gain, loudness maximization and nonlinear saturation from all
+  WAV and MP3 output paths
+- Added read-only logging for microphone APO effects without changing effect state
+
 # 1.0.0
 
 - The product is now ELARA (Easy Local Audio Recording App); executable, assembly

@@ -603,7 +603,7 @@ public sealed class MainForm : Form
 
         toolTip.SetToolTip(
             modeSelector,
-            $"Capture mode: {selectedMode.ToDisplayName()}. Both records system audio (left) and microphone (right), Mic only the microphone, System only system audio.");
+            $"Capture mode: {selectedMode.ToDisplayName()}. Both mixes system audio and microphone to mono, Mic records only the microphone, System only system audio.");
         toolTip.SetToolTip(micSelector, $"Microphone: {micSelector.Text}");
         toolTip.SetToolTip(systemSelector, $"System audio: {systemSelector.Text}");
         toolTip.SetToolTip(formatSelector, $"Output format: {selectedFormat.ToDisplayName()}");
