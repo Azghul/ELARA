@@ -17,9 +17,8 @@ public sealed class MainForm : Form
     private readonly ContextMenuStrip appMenu = new();
     private readonly ToolStripMenuItem microphoneMenuItem = new("Microphone");
     private readonly ToolStripMenuItem systemAudioMenuItem = new("System Audio");
-    private readonly WindowControlButton optionsButton = new(WindowControlButtonKind.Options);
-    private readonly WindowControlButton minimizeButton = new(WindowControlButtonKind.Minimize);
-    private readonly WindowControlButton closeButton = new(WindowControlButtonKind.Close);
+    private readonly WindowControlButton optionsButton = new();
+
     private NotifyIcon? trayIcon;
 
     // Selector menus. Each selector uses its own standalone ContextMenuStrip so the
@@ -238,8 +237,6 @@ public sealed class MainForm : Form
         recordButton.Size = new Size(368, 46);
         recordButton.BackColor = Color.Transparent;
 
-        minimizeButton.Click += (_, _) => HideToTray();
-        closeButton.Click += (_, _) => Close();
         optionsButton.Click += (_, _) => ShowOptions();
         toolTip.SetToolTip(optionsButton, "Options");
 
@@ -264,8 +261,6 @@ public sealed class MainForm : Form
         Controls.Add(browseButton);
         Controls.Add(recordButton);
         Controls.Add(openLink);
-        Controls.Add(minimizeButton);
-        Controls.Add(closeButton);
         Controls.Add(optionsButton);
 
         Icon = AppIcon.Load();
@@ -327,6 +322,7 @@ public sealed class MainForm : Form
 
         appMenu.Items.Add("About App", null, (_, _) => ShowAboutDialog());
         appMenu.Items.Add("View Audio Files", null, (_, _) => OpenAudioFolder());
+        appMenu.Items.Add("Hide to tray", null, (_, _) => HideToTray());
         appMenu.Items.Add(microphoneMenuItem);
         appMenu.Items.Add(systemAudioMenuItem);
         appMenu.Items.Add(new ToolStripSeparator());
@@ -494,9 +490,7 @@ public sealed class MainForm : Form
 
     private void LayoutCompactControls()
     {
-        closeButton.Location = new Point(ClientSize.Width - 28, 8);
-        minimizeButton.Location = new Point(closeButton.Left - 24, 8);
-        optionsButton.Location = new Point(minimizeButton.Left - 24, 8);
+        optionsButton.Location = new Point(ClientSize.Width - 30, 8);
         titleHeader.Location = new Point(18, 8);
         versionLabel.Location = new Point(18, 26);
 
@@ -1069,8 +1063,7 @@ public sealed class MainForm : Form
 
     private void AttachDragBehavior(Control control)
     {
-        if (control == recordButton || control == minimizeButton || control == closeButton
-            || control == optionsButton
+        if (control == recordButton || control == optionsButton
             || control == openLink
             || control == modeSelector || control == micSelector
             || control == systemSelector
@@ -1219,21 +1212,12 @@ public sealed class MainForm : Form
         return path;
     }
 
-    private enum WindowControlButtonKind
-    {
-        Options,
-        Minimize,
-        Close,
-    }
-
     private sealed class WindowControlButton : Control
     {
-        private readonly WindowControlButtonKind kind;
         private bool hovered;
 
-        public WindowControlButton(WindowControlButtonKind kind)
+        public WindowControlButton()
         {
-            this.kind = kind;
             Size = new Size(22, 16);
             Cursor = Cursors.Hand;
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
@@ -1263,19 +1247,8 @@ public sealed class MainForm : Form
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            var color = kind switch
-            {
-                WindowControlButtonKind.Close => hovered ? Color.FromArgb(255, 98, 129) : ForeColor,
-                WindowControlButtonKind.Options => hovered ? Color.FromArgb(178, 161, 255) : ForeColor,
-                _ => hovered ? Color.FromArgb(210, 216, 240) : ForeColor,
-            };
-
-            var caption = kind switch
-            {
-                WindowControlButtonKind.Close => "\u2715",
-                WindowControlButtonKind.Options => "\u2699",
-                _ => "\u2013",
-            };
+            var color = hovered ? Color.FromArgb(178, 161, 255) : ForeColor;
+            const string caption = "\u2699"; // settings gear
             TextRenderer.DrawText(
                 e.Graphics,
                 caption,
