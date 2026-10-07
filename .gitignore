@@ -3,5 +3,7 @@ obj/
 artifacts/ui-previews/
 artifacts/release/
 artifacts/publish-win-x64/
+artifacts/publish-win-x64-portable/
+artifacts/publish-win-x64-runtime-required/
 artifacts/*.zip
 nohup.out
