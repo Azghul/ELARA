@@ -163,51 +163,94 @@ try
 
     // ------------------------------------------------------------------
     // Endpoint quality classification: neutral names, format-based
-    // verdicts. The transport alone is never a quality verdict.
+    // verdicts. Device-type words, transport and form factor alone never
+    // produce a warning — only concrete quality indicators do.
     // ------------------------------------------------------------------
-    AssertEqual(false, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Microphone", "USB Conference Microphone"), "plain USB source: no telephony warning");
-    AssertEqual(false, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Microphone", "Studio USB Microphone"), "studio USB source: no telephony warning");
-    AssertEqual(false, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Microphone", "USB Audio Interface"), "audio interface: no telephony warning");
-    AssertEqual(false, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Microphone", "Laptop Microphone"), "laptop microphone: no telephony warning");
-    AssertEqual(false, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Microphone", "Webcam Microphone"), "webcam microphone: no telephony warning");
-    AssertEqual(true, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Microphone", "Bluetooth Headset Hands-Free AG Audio"), "hands-free AG audio: telephony warning");
-    AssertEqual(true, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Headset", "Any Device Name"), "headset form factor: telephony warning");
-    AssertEqual(true, EndpointQualityClassifier.IsTelephonyStyleEndpoint("Handset", null), "handset form factor: telephony warning");
-    AssertEqual(true, EndpointQualityClassifier.IsTelephonyStyleEndpoint(null, "Wireless USB Audio (Chat)"), "chat hint: telephony warning");
-    AssertEqual(true, EndpointQualityClassifier.IsTelephonyStyleEndpoint(null, "Telephony Device"), "telephony hint: telephony warning");
-    AssertEqual(false, EndpointQualityClassifier.IsTelephonyStyleEndpoint(null, null), "no data: no telephony warning");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("USB Conference Microphone"), "plain USB speakerphone name: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Freisprechtelefon mit Echoausschaltung"), "german speakerphone name: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Studio USB Microphone"), "studio USB source: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("USB Audio Interface"), "audio interface: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Laptop Microphone"), "laptop microphone: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Webcam Microphone"), "webcam microphone: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Bluetooth Stereo Microphone"), "bluetooth transport word alone: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Communications Device"), "communications word: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Chat Microphone"), "chat word: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Headset"), "headset word: no telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName(null), "no data: no telephony profile");
+    AssertEqual(true, EndpointQualityClassifier.IsStrongTelephonyProfileName("Bluetooth Headset Hands-Free AG Audio"), "hands-free AG audio: telephony profile");
+    AssertEqual(true, EndpointQualityClassifier.IsStrongTelephonyProfileName("Headset (Handsfree AG Audio)"), "handsfree AG audio variant: telephony profile");
+    AssertEqual(true, EndpointQualityClassifier.IsStrongTelephonyProfileName("Microphone (HFP)"), "HFP acronym: telephony profile");
+    AssertEqual(true, EndpointQualityClassifier.IsStrongTelephonyProfileName("Headset (HSP)"), "HSP acronym: telephony profile");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Microphone with HFPX in name"), "HFP needs word boundaries");
+    AssertEqual(false, EndpointQualityClassifier.IsStrongTelephonyProfileName("Microphone with HSPAL in name"), "HSP needs word boundaries");
+
+    AssertEqual(true, EndpointQualityClassifier.IsFullBandwidth(44100), "44.1 kHz is full bandwidth");
+    AssertEqual(true, EndpointQualityClassifier.IsFullBandwidth(48000), "48 kHz is full bandwidth");
+    AssertEqual(false, EndpointQualityClassifier.IsFullBandwidth(32000), "32 kHz is not full bandwidth");
+    AssertEqual(true, EndpointQualityClassifier.HasReducedBandwidthIndicator(16000), "16 kHz indicates reduced bandwidth");
+    AssertEqual(true, EndpointQualityClassifier.HasReducedBandwidthIndicator(32000), "32 kHz indicates reduced bandwidth");
+    AssertEqual(false, EndpointQualityClassifier.HasReducedBandwidthIndicator(48000), "48 kHz does not indicate reduced bandwidth");
+    AssertEqual(false, EndpointQualityClassifier.HasReducedBandwidthIndicator(0), "unknown rate indicates nothing");
 
     AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(8000)?.Contains("Low-bandwidth") == true, "8 kHz warns low-bandwidth");
-    AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(16000)?.Contains("Low-bandwidth") == true, "16 kHz warns low-bandwidth");
-    AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(32000)?.Contains("below 44.1") == true, "32 kHz gives a hint");
+    AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(16000)?.Contains("(16 kHz)") == true, "16 kHz warns low-bandwidth with the rate");
+    AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(32000)?.Contains("below 44.1") == true, "32 kHz gives only a mild hint");
+    AssertEqual(false, EndpointQualityClassifier.BuildLowBandwidthWarning(32000)?.Contains("Low-bandwidth") == true, "32 kHz does not give the strong low-bandwidth warning");
     AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(44100) is null, "44.1 kHz warns nothing");
     AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(48000) is null, "48 kHz warns nothing");
     AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(96000) is null, "96 kHz warns nothing");
     AssertEqual(true, EndpointQualityClassifier.BuildLowBandwidthWarning(0) is null, "unknown rate warns nothing");
 
-    var telephonyReport = new EndpointDiagnosticsReport(
+    var usbSpeakerphoneReport = new EndpointDiagnosticsReport(
         IsAvailable: true, IsWindowsDefault: false, PreferredDeviceId: "id", EndpointId: "ep",
-        FriendlyName: "Bluetooth Headset Hands-Free AG Audio", FormFactor: null, DeviceState: "Active", DataFlow: "Capture",
-        RoleDescription: "Explicit device selection", Transport: AudioEndpointTransport.Bluetooth,
-        MixSampleRate: 16000, MixChannels: 1, MixBitsPerSample: 16, MixFormatDescription: "16-bit PCM",
-        MixChannelMask: null, Error: null);
-    AssertEqual(true, telephonyReport.BuildQualityWarning()?.Contains("telephony") == true, "telephony endpoint reports a warning");
+        FriendlyName: "Freisprechtelefon mit Echoausschaltung (USB Conference Microphone)", FormFactor: "Speakers",
+        DeviceState: "Active", DataFlow: "Capture", RoleDescription: "Explicit device selection",
+        Transport: AudioEndpointTransport.Usb, MixSampleRate: 48000, MixChannels: 2, MixBitsPerSample: 32,
+        MixFormatDescription: "32-bit float", MixChannelMask: null, Error: null);
+    AssertEqual(true, usbSpeakerphoneReport.BuildQualityWarning() is null, "48 kHz USB speakerphone: no warning");
+    AssertEqual(false, usbSpeakerphoneReport.HasTelephonyProfileName, "speakerphone name is not a telephony profile");
 
-    var usbReport = new EndpointDiagnosticsReport(
+    var usbHeadsetReport = new EndpointDiagnosticsReport(
         IsAvailable: true, IsWindowsDefault: false, PreferredDeviceId: "id", EndpointId: "ep",
-        FriendlyName: "USB Conference Microphone", FormFactor: "Microphone", DeviceState: "Active", DataFlow: "Capture",
-        RoleDescription: "Explicit device selection", Transport: AudioEndpointTransport.Usb,
-        MixSampleRate: 48000, MixChannels: 2, MixBitsPerSample: 32, MixFormatDescription: "32-bit float",
-        MixChannelMask: null, Error: null);
-    AssertEqual(true, usbReport.BuildQualityWarning() is null, "48 kHz USB source: no quality warning");
+        FriendlyName: "USB Headset", FormFactor: "Headset",
+        DeviceState: "Active", DataFlow: "Capture", RoleDescription: "Explicit device selection",
+        Transport: AudioEndpointTransport.Usb, MixSampleRate: 48000, MixChannels: 1, MixBitsPerSample: 16,
+        MixFormatDescription: "16-bit PCM", MixChannelMask: null, Error: null);
+    AssertEqual(true, usbHeadsetReport.BuildQualityWarning() is null, "48 kHz headset (headset form factor): no warning");
 
-    var bluetoothReport = new EndpointDiagnosticsReport(
+    var bluetoothFullRateReport = new EndpointDiagnosticsReport(
         IsAvailable: true, IsWindowsDefault: false, PreferredDeviceId: "id", EndpointId: "ep",
-        FriendlyName: "Bluetooth Stereo Microphone", FormFactor: null, DeviceState: "Active", DataFlow: "Capture",
-        RoleDescription: "Explicit device selection", Transport: AudioEndpointTransport.Bluetooth,
-        MixSampleRate: 48000, MixChannels: 1, MixBitsPerSample: 16, MixFormatDescription: "16-bit PCM",
-        MixChannelMask: null, Error: null);
-    AssertEqual(true, bluetoothReport.BuildQualityWarning() is null, "48 kHz bluetooth source without telephony hints: no blanket warning");
+        FriendlyName: "Bluetooth Stereo Microphone", FormFactor: "Microphone",
+        DeviceState: "Active", DataFlow: "Capture", RoleDescription: "Explicit device selection",
+        Transport: AudioEndpointTransport.Bluetooth, MixSampleRate: 48000, MixChannels: 1, MixBitsPerSample: 16,
+        MixFormatDescription: "16-bit PCM", MixChannelMask: null, Error: null);
+    AssertEqual(true, bluetoothFullRateReport.BuildQualityWarning() is null, "48 kHz bluetooth source: no blanket transport warning");
+
+    var bluetoothHfpFullRateReport = new EndpointDiagnosticsReport(
+        IsAvailable: true, IsWindowsDefault: false, PreferredDeviceId: "id", EndpointId: "ep",
+        FriendlyName: "Bluetooth Headset Hands-Free AG Audio", FormFactor: "Headset",
+        DeviceState: "Active", DataFlow: "Capture", RoleDescription: "Explicit device selection",
+        Transport: AudioEndpointTransport.Bluetooth, MixSampleRate: 48000, MixChannels: 1, MixBitsPerSample: 16,
+        MixFormatDescription: "16-bit PCM", MixChannelMask: null, Error: null);
+    AssertEqual(true, bluetoothHfpFullRateReport.BuildQualityWarning() is null, "48 kHz hands-free profile name without bandwidth indicator: no warning");
+
+    var bluetoothHfp16kReport = new EndpointDiagnosticsReport(
+        IsAvailable: true, IsWindowsDefault: false, PreferredDeviceId: "id", EndpointId: "ep",
+        FriendlyName: "Bluetooth Headset Hands-Free AG Audio", FormFactor: "Headset",
+        DeviceState: "Active", DataFlow: "Capture", RoleDescription: "Explicit device selection",
+        Transport: AudioEndpointTransport.Bluetooth, MixSampleRate: 16000, MixChannels: 1, MixBitsPerSample: 16,
+        MixFormatDescription: "16-bit PCM", MixChannelMask: null, Error: null);
+    var hfpWarning = bluetoothHfp16kReport.BuildQualityWarning();
+    AssertEqual(true, hfpWarning?.Contains("Low-bandwidth") == true, "16 kHz hands-free endpoint: low-bandwidth warning");
+    AssertEqual(true, hfpWarning?.Contains("telephony") == true, "16 kHz hands-free endpoint: telephony hint");
+
+    var lowBandwidth16kReport = new EndpointDiagnosticsReport(
+        IsAvailable: true, IsWindowsDefault: true, PreferredDeviceId: null, EndpointId: "ep",
+        FriendlyName: "Some Microphone", FormFactor: "Microphone",
+        DeviceState: "Active", DataFlow: "Capture", RoleDescription: "Windows default (Multimedia role)",
+        Transport: AudioEndpointTransport.Usb, MixSampleRate: 16000, MixChannels: 1, MixBitsPerSample: 16,
+        MixFormatDescription: "16-bit PCM", MixChannelMask: null, Error: null);
+    AssertEqual(true, lowBandwidth16kReport.BuildQualityWarning()?.Contains("Low-bandwidth") == true, "16 kHz input: low-bandwidth warning without a profile name");
 
     // ------------------------------------------------------------------
     // Format descriptions: PCM16, float32, channel counts.

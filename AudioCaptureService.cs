@@ -572,23 +572,28 @@ public sealed class AudioCaptureService : IDisposable
     /// Read-only quality classification of the active microphone endpoint and its
     /// capture format. ELARA never changes device configuration or switches
     /// endpoints because of this classification; it only logs and surfaces the
-    /// finding in the UI.
+    /// finding in the UI. A telephony profile name alone is not a warning — it
+    /// is only surfaced together with an actual reduced-bandwidth capture
+    /// format, so high-quality USB speakerphones or headsets stay clean.
     /// </summary>
     private void LogEndpointQualityClassification(
         string? deviceName,
         CapturedStreamFormat? captureFormat)
     {
-        if (EndpointQualityClassifier.IsTelephonyStyleEndpoint(formFactor: null, deviceName))
+        if (captureFormat is { } activeFormat)
         {
-            AppLogger.Warn(
-                $"The active microphone endpoint '{deviceName}' is classified as a possible telephony / hands-free style endpoint. Capture quality may be reduced. ELARA has not changed any device configuration or endpoint.");
-        }
+            if (EndpointQualityClassifier.BuildLowBandwidthWarning(activeFormat.SampleRate) is { } lowBandwidth)
+            {
+                AppLogger.Warn(
+                    $"The active microphone capture format is {activeFormat.Description}. {lowBandwidth}");
+            }
 
-        if (captureFormat is { } activeFormat
-            && EndpointQualityClassifier.BuildLowBandwidthWarning(activeFormat.SampleRate) is { } lowBandwidth)
-        {
-            AppLogger.Warn(
-                $"The active microphone capture format is {activeFormat.Description}. {lowBandwidth}");
+            if (EndpointQualityClassifier.IsStrongTelephonyProfileName(deviceName)
+                && EndpointQualityClassifier.HasReducedBandwidthIndicator(activeFormat.SampleRate))
+            {
+                AppLogger.Warn(
+                    $"The active microphone endpoint '{deviceName}' is classified as a possible telephony / hands-free style endpoint. Capture quality may be reduced. ELARA has not changed any device configuration or endpoint.");
+            }
         }
     }
 

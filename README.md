@@ -13,7 +13,7 @@ A lightweight Windows desktop recorder for microphone and system audio.
 - Output formats: MP3 (mono, 48 kHz, 128 kbit/s CBR, single encode pass) and PCM WAV — chosen in the Save As dialog when a recording starts (a default timestamped file name is offered)
 - All output is 48 kHz mono; Both mixes system audio and microphone 50/50, and uses the one active source at unity when the other carries no signal at all
 - Pre-recording diagnostics panel: selected input device, used audio endpoint, endpoint state, data flow, transport (only when Windows reports it reliably, e.g. USB), form factor, sample rate, channel count, input bit depth/format (PCM vs IEEE float, incl. WAVEFORMATEXTENSIBLE sub-format and channel mask) and the actual output parameters; during a recording it shows the capture formats the audio clients really initialized
-- Read-only quality hints derived from the actual format (low-bandwidth 8/16 kHz warning) and a neutral telephony/hands-free classification; ELARA never switches, blocks or reconfigures anything
+- Read-only quality hints derived from the actual format (low-bandwidth 8/16 kHz warning, mild hint below 44.1 kHz); device-type words, transport and form factor alone never warn — a small "Quality: OK" note marks full-bandwidth inputs; ELARA never switches, blocks or reconfigures anything
 - Microphone capture requests Windows RAW stream options and falls back to the normal shared mode when RAW is unavailable (logged with `WindowsProcessingMayBeActive=True`)
 - No automatic gain, loudness maximization, noise suppression, echo cancellation or nonlinear saturation is applied or requested by ELARA; device effect discovery is read-only
 - Visible mode and device selectors in the main window

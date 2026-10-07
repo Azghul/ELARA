@@ -64,7 +64,7 @@ public sealed class MainForm : Form
     {
         Text = "ELARA";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(432, 444);
+        ClientSize = new Size(432, 452);
         MinimumSize = Size;
         MaximumSize = Size;
         FormBorderStyle = FormBorderStyle.None;
@@ -260,7 +260,7 @@ public sealed class MainForm : Form
 
         diagnosticsFieldLabel.Text = "Diagnostics";
         diagnosticsLabel.AutoSize = false;
-        diagnosticsLabel.Font = new Font("Cascadia Mono", 6.75F, FontStyle.Regular, GraphicsUnit.Point);
+        diagnosticsLabel.Font = new Font("Cascadia Mono", 6.5F, FontStyle.Regular, GraphicsUnit.Point);
         diagnosticsLabel.ForeColor = Color.FromArgb(178, 185, 214);
         diagnosticsLabel.BackColor = Color.Transparent;
 
@@ -500,7 +500,7 @@ public sealed class MainForm : Form
         recordButton.Width = ClientSize.Width - 64;
 
         diagnosticsFieldLabel.Location = new Point(22, recordButton.Bottom + 8);
-        diagnosticsLabel.SetBounds(22, recordButton.Bottom + 26, ClientSize.Width - 44, 84);
+        diagnosticsLabel.SetBounds(22, recordButton.Bottom + 26, ClientSize.Width - 44, 92);
 
         openLink.Location = new Point((ClientSize.Width - openLink.PreferredWidth) / 2, ClientSize.Height - 24);
     }
@@ -813,28 +813,27 @@ public sealed class MainForm : Form
 
     private string BuildPreFlightDiagnosticsText(EndpointDiagnosticsReport report)
     {
-        var lines = new List<string>();
-        var isMicrophoneRole = selectedMode != CaptureMode.System;
-        var roleLabel = isMicrophoneRole ? "Mic" : "Sys";
+        var lines = new List<string> { "Audio" };
 
         if (report.IsAvailable)
         {
-            lines.Add($"{roleLabel}: {Truncate(report.FriendlyName ?? "<unknown>", 44)}");
-            lines.Add($"Transport: {report.Transport.ToDisplayName()}");
-            lines.Add($"Input: {DescribeMixFormat(report)}");
+            lines.Add($"Input: {Truncate(report.FriendlyName ?? "<unknown>", 44)}");
+            if (report.Transport != AudioEndpointTransport.Unknown)
+            {
+                lines.Add($"Connection: {report.Transport.ToDisplayName()}");
+            }
         }
         else
         {
-            lines.Add($"{roleLabel}: unavailable");
-            lines.Add("Transport: Unknown");
-            lines.Add("Input: not available — recording will be blocked");
+            lines.Add("Input: unavailable — recording will be blocked");
         }
 
         if (selectedMode == CaptureMode.Both)
         {
-            lines.Add($"Sys: {Truncate(selectedPlaybackDeviceName ?? "Windows default playback device", 40)}");
+            lines.Add($"System: {Truncate(selectedPlaybackDeviceName ?? "Windows default playback device", 40)}");
         }
 
+        lines.Add($"Signal: {DescribeSignalFormat(report)}");
         lines.Add($"Capture: {DescribePlannedCaptureState()}");
         lines.Add($"Output: {DescribeOutputProfile(selectedFormat)}");
 
@@ -842,6 +841,10 @@ public sealed class MainForm : Form
         if (warning is not null)
         {
             lines.Add($"(!) {warning}");
+        }
+        else if (report.IsAvailable && EndpointQualityClassifier.IsFullBandwidth(report.MixSampleRate))
+        {
+            lines.Add("Quality: OK");
         }
 
         return string.Join(Environment.NewLine, lines);
@@ -857,6 +860,7 @@ public sealed class MainForm : Form
             $"Endpoint state: {report.DeviceState ?? "<n/a>"}",
             $"Data flow: {report.DataFlow}; {report.RoleDescription}",
             $"Transport: {report.Transport.ToDisplayName()}",
+            $"Form factor: {report.FormFactor ?? "<unknown>"}",
             $"Native/mix format: {(report.IsAvailable ? $"{report.MixSampleRate} Hz, {report.MixChannels} channel(s), {report.MixBitsPerSample}-bit, {report.MixFormatDescription ?? "unknown"}{(report.MixChannelMask is { } mask ? $", channel mask 0x{mask:X8}" : string.Empty)}" : "n/a")}",
             $"Capture request: {RecordingOutputProfile.SampleRateKhz} mono, RAW stream options (Windows adaptive processing bypassed when accepted)",
             $"Output: {DescribeOutputProfile(selectedFormat)}, encoded once from 16-bit PCM",
@@ -869,57 +873,75 @@ public sealed class MainForm : Form
         return string.Join(Environment.NewLine, details);
     }
 
-    private static string DescribeMixFormat(EndpointDiagnosticsReport report)
+    private static string DescribeSignalFormat(EndpointDiagnosticsReport report)
     {
         if (!report.IsAvailable || report.MixSampleRate <= 0)
         {
             return "n/a";
         }
 
-        var rate = $"{report.MixSampleRate / 1000D:0.#} kHz";
-        var channels = report.MixChannels == 1 ? "Mono" : $"{report.MixChannels} ch";
-        return $"{rate} · {channels} · {report.MixFormatDescription ?? "unknown"}";
+        return $"{report.MixSampleRate / 1000D:0.#} kHz · {DescribeChannels(report.MixChannels)}";
+    }
+
+    private static string DescribeChannels(short channels)
+    {
+        return channels switch
+        {
+            1 => "Mono",
+            2 => "Stereo",
+            <= 0 => "n/a",
+            _ => $"{channels} ch",
+        };
     }
 
     private string DescribePlannedCaptureState()
     {
         return selectedMode == CaptureMode.System
-            ? "48 kHz · Loopback (requested)"
-            : "48 kHz · Mono · RAW (requested)";
+            ? "48 kHz · Mono · Loopback"
+            : "48 kHz · Mono · RAW";
     }
 
     private static string DescribeOutputProfile(OutputFormat format)
     {
         return format == OutputFormat.Mp3
-            ? $"MP3 · Mono · {RecordingOutputProfile.SampleRateKhz} · {RecordingOutputProfile.Mp3BitRateKbps} kbps · single encode"
-            : $"WAV · PCM16 · Mono · {RecordingOutputProfile.SampleRateKhz}";
+            ? $"MP3 · {RecordingOutputProfile.SampleRateKhz} · Mono · {RecordingOutputProfile.Mp3BitRateKbps} kbps"
+            : $"WAV · {RecordingOutputProfile.SampleRateKhz} · Mono · PCM16";
     }
 
     private void ApplyRecordingDiagnostics()
     {
         var report = lastEndpointReport;
-        var lines = new List<string>();
+        var lines = new List<string> { "Audio" };
 
         if (selectedMode is CaptureMode.Microphone or CaptureMode.Both)
         {
-            lines.Add($"Mic: {Truncate(captureService.ActiveMicrophoneDeviceName ?? "<unknown>", 44)}");
-            lines.Add($"Transport: {(report?.Transport.ToDisplayName() ?? "Unknown")}");
-            lines.Add($"Input: {(report is { IsAvailable: true } ? DescribeMixFormat(report) : "n/a")}");
-            lines.Add(
-                $"Capture: {DescribeCaptureState(captureService.ActiveMicrophoneFormat, captureService.ActiveMicrophoneRawActivated, isLoopback: false)}");
+            lines.Add($"Input: {Truncate(captureService.ActiveMicrophoneDeviceName ?? "<unknown>", 44)}");
+            if (report is { IsAvailable: true } && report.Transport != AudioEndpointTransport.Unknown)
+            {
+                lines.Add($"Connection: {report.Transport.ToDisplayName()}");
+            }
         }
 
         if (selectedMode is CaptureMode.System or CaptureMode.Both)
         {
-            lines.Add($"Sys: {Truncate(captureService.ActiveSystemDeviceName ?? "<unknown>", 44)}");
-            if (selectedMode == CaptureMode.System)
-            {
-                lines.Add(
-                    $"Capture: {DescribeCaptureState(captureService.ActiveSystemFormat, null, isLoopback: true)}");
-            }
+            lines.Add($"System: {Truncate(captureService.ActiveSystemDeviceName ?? "<unknown>", 44)}");
         }
 
+        lines.Add($"Signal: {(report is { IsAvailable: true } ? DescribeSignalFormat(report) : "n/a")}");
+        lines.Add(
+            $"Capture: {DescribeCaptureState(captureService.ActiveMicrophoneFormat, captureService.ActiveMicrophoneRawActivated, isLoopback: selectedMode == CaptureMode.System)}");
         lines.Add($"Output: {DescribeOutputProfile(selectedFormat)}");
+
+        var warning = report?.BuildQualityWarning();
+        if (warning is not null)
+        {
+            lines.Add($"(!) {warning}");
+        }
+        else if (report is { IsAvailable: true } && EndpointQualityClassifier.IsFullBandwidth(report.MixSampleRate))
+        {
+            lines.Add("Quality: OK");
+        }
+
         diagnosticsLabel.Text = string.Join(Environment.NewLine, lines);
 
         var details = new List<string>
@@ -929,6 +951,8 @@ public sealed class MainForm : Form
             $"Endpoint ID: {report?.EndpointId ?? captureService.ActiveMicrophoneDeviceId ?? "<n/a>"}",
             $"Endpoint state: {report?.DeviceState ?? "<n/a>"}",
             $"Data flow: {report?.DataFlow ?? "<n/a>"}; {report?.RoleDescription ?? "<n/a>"}",
+            $"Transport detection: {report?.Transport.ToDisplayName() ?? "Unknown"} (PKEY_Device_EnumeratorName)",
+            $"Form factor: {report?.FormFactor ?? "<unknown>"}",
             $"Native/mix format: {(report is { IsAvailable: true } ? $"{report.MixSampleRate} Hz, {report.MixChannels} channel(s), {report.MixBitsPerSample}-bit, {report.MixFormatDescription ?? "unknown"}{(report.MixChannelMask is { } mask ? $", channel mask 0x{mask:X8}" : string.Empty)}" : "n/a")}",
             $"Initialized capture format: {captureService.ActiveMicrophoneFormat?.Description ?? "<n/a>"}",
             $"RAW: Requested={(captureService.ActiveMicrophoneRawActivated is not null)}; Activated={captureService.ActiveMicrophoneRawActivated?.ToString() ?? "<n/a>"}",
@@ -942,8 +966,8 @@ public sealed class MainForm : Form
         if (format is not { } activeFormat)
         {
             return isLoopback
-                ? "48 kHz · Loopback (requested)"
-                : "48 kHz · Mono · RAW (requested)";
+                ? "48 kHz · Mono · Loopback"
+                : "48 kHz · Mono · RAW";
         }
 
         var rate = $"{activeFormat.SampleRate / 1000D:0.#} kHz";

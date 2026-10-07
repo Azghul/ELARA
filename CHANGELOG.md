@@ -22,9 +22,17 @@
   speech capture category and no longer changes any audio effect state;
   device effect discovery is strictly read-only
 - Read-only quality hints derived from the actual format: low-bandwidth
-  warnings for 8/16 kHz capture formats and a hint below 44.1 kHz, plus a
-  neutral telephony/hands-free endpoint classification; the transport alone is
-  never treated as a quality verdict
+  warnings for 8/16 kHz capture formats and a mild hint below 44.1 kHz;
+  an unambiguous telephony profile name (e.g. "Hands-Free AG Audio", HFP/HSP)
+  is only surfaced together with a reduced-bandwidth format — device-type
+  words, transport and form factor alone never warn, so high-quality
+  speakerphones and headsets stay clean; a small "Quality: OK" note marks
+  full-bandwidth inputs
+- Simplified, user-friendly diagnostics panel (device name, connection when
+  reliably known, signal rate/channels, capture mode, output profile,
+  quality note); technical details (endpoint ID, float/PCM payload, form
+  factor, channel mask, transport detection, RAW requested/activated) stay
+  in the log and the tooltip
 - Unified capture pipeline: 48 kHz mono PCM16 temp files, at most one
   WASAPI shared-mode conversion (AUTOCONVERTPCM + default-quality SRC),
   exactly one MP3 encoding pass

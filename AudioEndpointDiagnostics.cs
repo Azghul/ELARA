@@ -73,17 +73,20 @@ internal sealed record EndpointDiagnosticsReport(
     }
 
     /// <summary>
-    /// True when the endpoint looks like a telephony/hands-free style capture.
-    /// Pure read-only classification: ELARA never switches, blocks or configures
-    /// anything because of it.
+    /// True when the endpoint name carries unambiguous telephony profile
+    /// naming (e.g. "Hands-Free AG Audio", "HFP", "HSP"). Read-only
+    /// classification: ELARA never switches, blocks or configures anything
+    /// because of it. Alone it is not a quality warning — the actual format
+    /// must indicate reduced bandwidth as well.
     /// </summary>
-    public bool IsTelephonyStyleEndpoint =>
-        EndpointQualityClassifier.IsTelephonyStyleEndpoint(FormFactor, FriendlyName);
+    public bool HasTelephonyProfileName =>
+        EndpointQualityClassifier.IsStrongTelephonyProfileName(FriendlyName);
 
     /// <summary>
-    /// Neutral quality concern derived from the endpoint classification and the
-    /// actual available format, or null. The transport alone is never treated as
-    /// a quality verdict.
+    /// Neutral quality concern derived from the actual available format and, in
+    /// addition, from unambiguous telephony profile naming combined with a
+    /// reduced-bandwidth format. The transport, the form factor or device-type
+    /// words alone are never treated as a quality verdict.
     /// </summary>
     public string? BuildQualityWarning()
     {
@@ -92,19 +95,17 @@ internal sealed record EndpointDiagnosticsReport(
             return null;
         }
 
-        var telephonyWarning = IsTelephonyStyleEndpoint
-            ? EndpointQualityClassifier.TelephonyWarning
-            : null;
         var lowBandwidthWarning = EndpointQualityClassifier.BuildLowBandwidthWarning(MixSampleRate);
 
-        if (telephonyWarning is null)
+        if (HasTelephonyProfileName
+            && EndpointQualityClassifier.HasReducedBandwidthIndicator(MixSampleRate))
         {
-            return lowBandwidthWarning;
+            return lowBandwidthWarning is null
+                ? EndpointQualityClassifier.TelephonyWarning
+                : $"{lowBandwidthWarning} {EndpointQualityClassifier.TelephonyWarning}";
         }
 
-        return lowBandwidthWarning is null
-            ? telephonyWarning
-            : $"{telephonyWarning} {lowBandwidthWarning}";
+        return lowBandwidthWarning;
     }
 }
 
@@ -248,7 +249,7 @@ internal static class AudioEndpointDiagnostics
                 Error: null);
 
             AppLogger.Info(
-                $"Endpoint diagnostics. Flow={selection.DataFlow}; Selection={(selection.IsExplicitDevice ? "Explicit" : "WindowsDefault")}; Name={friendlyName}; State={deviceState}; FormFactor={formFactor ?? "<unknown>"}; Transport={transport.ToDisplayName()}; MixFormat={mixSampleRate} Hz; Channels={mixChannels}; Bits={mixBitsPerSample}; Format={mixFormatDescription ?? "<unknown>"}; ChannelMask={(mixChannelMask.HasValue ? $"0x{mixChannelMask.Value:X8}" : "<n/a>")}; TelephonyStyle={report.IsTelephonyStyleEndpoint}; QualityWarning={(report.BuildQualityWarning() ?? "<none>")}");
+                $"Endpoint diagnostics. Flow={selection.DataFlow}; Selection={(selection.IsExplicitDevice ? "Explicit" : "WindowsDefault")}; Name={friendlyName}; State={deviceState}; FormFactor={formFactor ?? "<unknown>"}; Transport={transport.ToDisplayName()}; MixFormat={mixSampleRate} Hz; Channels={mixChannels}; Bits={mixBitsPerSample}; Format={mixFormatDescription ?? "<unknown>"}; ChannelMask={(mixChannelMask.HasValue ? $"0x{mixChannelMask.Value:X8}" : "<n/a>")}; TelephonyProfileName={report.HasTelephonyProfileName}; QualityWarning={(report.BuildQualityWarning() ?? "<none>")}");
             return report;
         }
         catch (Exception ex)
