@@ -57,15 +57,31 @@ dotnet build ELARA.csproj
 
 ## Publish (Windows x64)
 
-Self-contained release (no .NET installation required on the target PC):
+Two distribution variants are built (both self-contained release hygiene applies:
+no PDBs, no logs, no settings, x64 LAME only):
 
 ```bash
 ./scripts/publish-win-x64.sh
 ```
 
-This creates `artifacts/ELARA-<version>-win-x64.zip` containing the EXE and all required
-DLLs (including the native LAME encoder and the license files). The script also prints
-the publish output so the contained files can be verified.
+This creates:
+
+- `artifacts/ELARA-<version>-win-x64-portable.zip` — self-contained, includes the
+  .NET runtime; no separate .NET installation required on the target PC.
+- `artifacts/ELARA-<version>-win-x64-runtime-required.zip` — framework-dependent;
+  requires Microsoft .NET 10 Desktop Runtime x64 to be installed. Smaller
+  download, same application (no trimming is applied to keep the build stable).
+
+Both ZIPs contain the EXE/DLLs, the native LAME encoder, the app icon and the
+license files. The script validates each variant, prints the publish output and
+reports the ZIP sizes and SHA256 checksums.
+
+## Windows downloads
+
+- **Portable** (`ELARA-<version>-win-x64-portable.zip`)
+  No separate .NET installation required.
+- **Runtime-required** (`ELARA-<version>-win-x64-runtime-required.zip`)
+  Requires Microsoft .NET 10 Desktop Runtime x64.
 
 ## Logs
 

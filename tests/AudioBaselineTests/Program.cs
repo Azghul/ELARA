@@ -308,6 +308,39 @@ try
         legacyProcessingSettings.ResolveOutputFormat().ToString(),
         "settings with the legacy processing key still load");
 
+    // ------------------------------------------------------------------
+    // Static UI/packaging checks: the main window is resizable, the visible
+    // diagnostics area is gone from the main window, diagnostics live behind
+    // Options, and the publish script produces both ZIP variants. Plain
+    // source-level checks (no UI automation).
+    // ------------------------------------------------------------------
+    var sourceRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    var mainFormSource = File.ReadAllText(Path.Combine(sourceRoot, "MainForm.cs"));
+    var optionsSource = File.ReadAllText(Path.Combine(sourceRoot, "OptionsDialog.cs"));
+    var diagnosticsSource = File.ReadAllText(Path.Combine(sourceRoot, "DiagnosticsDialog.cs"));
+    var scriptSource = File.ReadAllText(Path.Combine(sourceRoot, "scripts", "publish-win-x64.sh"));
+    var versionSource = File.ReadAllText(Path.Combine(sourceRoot, "AppVersion.cs"));
+
+    AssertEqual(true, mainFormSource.Contains("FormBorderStyle.Sizable"), "main window uses a sizable frame");
+    AssertEqual(true, mainFormSource.Contains("MaximizeBox = true"), "main window can maximize");
+    AssertEqual(true, mainFormSource.Contains("MinimizeBox = true"), "main window can minimize");
+    AssertEqual(true, mainFormSource.Contains("MinimumSize = SizeFromClientSize"), "main window defines a minimum size derived from the compact layout");
+    AssertEqual(false, mainFormSource.Contains("MaximumSize = Size"), "main window is not capped to a fixed size");
+    AssertEqual(true, mainFormSource.Contains("OnSizeChanged") && mainFormSource.Contains("LayoutCompactControls"), "main window relayouts on resize (responsive layout)");
+    AssertEqual(true, mainFormSource.Contains("ClientSize.Width - selectorLeft"), "selector width grows with the window width");
+    AssertEqual(true, mainFormSource.Contains("ClientSize.Width - 64"), "record button grows with the window width");
+    AssertEqual(false, mainFormSource.Contains("diagnosticsLabel"), "no visible diagnostics area on the main window");
+    AssertEqual(false, mainFormSource.Contains("diagnosticsFieldLabel"), "no diagnostics header on the main window");
+    AssertEqual(true, mainFormSource.Contains("DiagnosticsDialog"), "main window opens the diagnostics dialog");
+    AssertEqual(true, mainFormSource.Contains("SaveWindowBounds") && mainFormSource.Contains("RestoreWindowBounds"), "window bounds are persisted with screen validation");
+    AssertEqual(true, optionsSource.Contains("Audio Diagnostics..."), "options dialog exposes the diagnostics dialog");
+    AssertEqual(true, diagnosticsSource.Contains("Clipboard.SetText"), "diagnostics dialog can copy the report to the clipboard");
+    AssertEqual(true, diagnosticsSource.Contains("Refresh"), "diagnostics dialog can refresh");
+    AssertEqual(true, diagnosticsSource.Contains("AudioEndpointDiagnostics.GetMicrophone"), "diagnostics dialog reuses the shared endpoint diagnostics logic");
+    AssertEqual(true, scriptSource.Contains("win-x64-portable.zip"), "publish script builds the portable ZIP");
+    AssertEqual(true, scriptSource.Contains("win-x64-runtime-required.zip"), "publish script builds the runtime-required ZIP");
+    AssertEqual(true, versionSource.Contains("Application.ProductVersion"), "version stays dynamic");
+
     Console.WriteLine("Audio baseline tests passed.");
 }
 finally

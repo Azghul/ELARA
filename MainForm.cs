@@ -44,8 +44,6 @@ public sealed class MainForm : Form
     private readonly StatusBadgeControl statusBadge = new();
     private readonly DotMeterControl levelMeter = new();
     private readonly RecordActionButton recordButton = new();
-    private readonly Label diagnosticsFieldLabel = CreateFieldLabel("Diagnostics");
-    private readonly Label diagnosticsLabel = new();
 
     private CaptureMode selectedMode = CaptureMode.Both;
     private string? selectedMicrophoneDeviceId;
@@ -56,21 +54,16 @@ public sealed class MainForm : Form
     private bool previewMode;
     private bool previewRecording;
     private bool recordingOperationInProgress;
-    private int diagnosticsProbeGeneration;
-    private EndpointDiagnosticsReport? pendingDiagnosticsReport;
-    private EndpointDiagnosticsReport? lastEndpointReport;
 
     public MainForm()
     {
         Text = "ELARA";
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(432, 452);
-        MinimumSize = Size;
-        MaximumSize = Size;
-        FormBorderStyle = FormBorderStyle.None;
-        ShowIcon = false;
-        MaximizeBox = false;
-        MinimizeBox = false;
+        ClientSize = new Size(432, 352);
+        MinimumSize = SizeFromClientSize(new Size(432, 352));
+        FormBorderStyle = FormBorderStyle.Sizable;
+        MaximizeBox = true;
+        MinimizeBox = true;
         BackColor = Color.FromArgb(13, 17, 39);
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
         DoubleBuffered = true;
@@ -86,29 +79,17 @@ public sealed class MainForm : Form
         ApplyVisualState();
         UpdateStatus(null, default, null);
         UpdateModeText();
-        UpdateWindowRegion();
 
         uiTimer.Tick += HandleUiTick;
         recordButton.Click += async (_, _) => await ToggleRecordingAsync();
-        QueueDiagnosticsRefresh();
-        AppLogger.Info("Main window initialized.");
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-
-        // A diagnostics probe may finish before the window handle exists (for
-        // example during construction); apply it now that marshalling is possible.
-        if (pendingDiagnosticsReport is { } pending)
-        {
-            pendingDiagnosticsReport = null;
-            ApplyEndpointDiagnostics(pending);
-        }
+        AppLogger.Info(
+            $"Main window initialized. MinimumSize={MinimumSize.Width}x{MinimumSize.Height}; Border={FormBorderStyle}");
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        SaveWindowBounds();
+
         // Never dispose the capture service while a start/stop/save operation is
         // still running; the close is simply retried by the user afterwards.
         if (recordingOperationInProgress)
@@ -214,7 +195,6 @@ public sealed class MainForm : Form
         timerLabel.Text = state.TimerText;
         levelMeter.SetPreviewLevels(state.Levels);
         UpdateModeText();
-        ApplyStaticDiagnostics();
         UpdateStatus(state.StatusText, state.StatusColor, state.StatusDetails);
         ApplyVisualState();
         Refresh();
@@ -258,12 +238,6 @@ public sealed class MainForm : Form
         recordButton.Size = new Size(368, 46);
         recordButton.BackColor = Color.Transparent;
 
-        diagnosticsFieldLabel.Text = "Diagnostics";
-        diagnosticsLabel.AutoSize = false;
-        diagnosticsLabel.Font = new Font("Cascadia Mono", 6.5F, FontStyle.Regular, GraphicsUnit.Point);
-        diagnosticsLabel.ForeColor = Color.FromArgb(178, 185, 214);
-        diagnosticsLabel.BackColor = Color.Transparent;
-
         minimizeButton.Click += (_, _) => HideToTray();
         closeButton.Click += (_, _) => Close();
         optionsButton.Click += (_, _) => ShowOptions();
@@ -289,8 +263,6 @@ public sealed class MainForm : Form
         Controls.Add(outputPathSelector);
         Controls.Add(browseButton);
         Controls.Add(recordButton);
-        Controls.Add(diagnosticsFieldLabel);
-        Controls.Add(diagnosticsLabel);
         Controls.Add(openLink);
         Controls.Add(minimizeButton);
         Controls.Add(closeButton);
@@ -344,7 +316,6 @@ public sealed class MainForm : Form
                     AppLogger.Info($"Capture mode changed to {localMode.ToDisplayName()}.");
                     UpdateModeText();
                     UpdateStatus(null, default, null);
-                    QueueDiagnosticsRefresh();
                 }));
         }
     }
@@ -451,6 +422,8 @@ public sealed class MainForm : Form
             // machines without usable audio devices.
             AppLogger.Warn($"Could not validate the saved devices at startup. {ex.Message}");
         }
+
+        RestoreWindowBounds(settings);
     }
 
     private void SaveSettings()
@@ -462,6 +435,61 @@ public sealed class MainForm : Form
             Format = selectedFormat.ToString(),
             CustomOutputDirectory = captureService.CustomOutputDirectory,
         }.Save();
+    }
+
+    /// <summary>
+    /// Restores the last saved window bounds when they are still plausible:
+    /// large enough, and overlapping at least one visible screen. Otherwise the
+    /// default placement (centered) is used.
+    /// </summary>
+    private void RestoreWindowBounds(AppSettings settings)
+    {
+        if (settings.WindowWidth is not int width || settings.WindowHeight is not int height
+            || settings.WindowLeft is not int left || settings.WindowTop is not int top)
+        {
+            return;
+        }
+
+        if (width < MinimumSize.Width || height < MinimumSize.Height)
+        {
+            AppLogger.Info(
+                $"Saved window size {width}x{height} is below the current minimum size; using the default placement.");
+            return;
+        }
+
+        var bounds = new Rectangle(left, top, width, height);
+        if (!Screen.AllScreens.Any(screen => screen.WorkingArea.IntersectsWith(bounds)))
+        {
+            AppLogger.Info("Saved window position is not on a visible screen; using the default placement.");
+            return;
+        }
+
+        StartPosition = FormStartPosition.Manual;
+        Bounds = bounds;
+        AppLogger.Info($"Restored window bounds. Left={left}; Top={top}; Width={width}; Height={height}");
+    }
+
+    /// <summary>Saves the current window bounds (normal state only, never maximized bounds).</summary>
+    private void SaveWindowBounds()
+    {
+        if (WindowState != FormWindowState.Normal)
+        {
+            return;
+        }
+
+        try
+        {
+            var settings = AppSettings.Load();
+            settings.WindowLeft = Left;
+            settings.WindowTop = Top;
+            settings.WindowWidth = Width;
+            settings.WindowHeight = Height;
+            settings.Save();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn($"Could not save the window bounds. {ex.Message}");
+        }
     }
 
     private void LayoutCompactControls()
@@ -498,9 +526,6 @@ public sealed class MainForm : Form
 
         recordButton.Location = new Point(32, outputRowTop + 42);
         recordButton.Width = ClientSize.Width - 64;
-
-        diagnosticsFieldLabel.Location = new Point(22, recordButton.Bottom + 8);
-        diagnosticsLabel.SetBounds(22, recordButton.Bottom + 26, ClientSize.Width - 44, 92);
 
         openLink.Location = new Point((ClientSize.Width - openLink.PreferredWidth) / 2, ClientSize.Height - 24);
     }
@@ -577,13 +602,11 @@ public sealed class MainForm : Form
             }
 
             UpdateStatus("Recording", Color.FromArgb(255, 142, 168), recordingDetails);
-            ApplyRecordingDiagnostics();
         }
         catch (Exception ex)
         {
             AppLogger.Error("UI start recording failed.", ex);
             UpdateStatus("Blocked", Color.FromArgb(255, 196, 120), ex.Message);
-            QueueDiagnosticsRefresh();
             MessageBox.Show(this, ex.Message, "Audio Capture Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
@@ -634,7 +657,6 @@ public sealed class MainForm : Form
         // Remember the last used format so the next Save As preselects the same filter.
         selectedFormat = chosenFormat;
         SaveSettings();
-        QueueDiagnosticsRefresh();
 
         // A different folder chosen in the Save As dialog becomes the new default
         // Save-to folder (persisted); Open Audio Files follows it automatically.
@@ -710,7 +732,6 @@ public sealed class MainForm : Form
             uiTimer.Stop();
             recordingOperationInProgress = false;
             ApplyVisualState();
-            QueueDiagnosticsRefresh();
         }
     }
 
@@ -755,245 +776,6 @@ public sealed class MainForm : Form
         outputPathSelector.Text = outputDirectory;
         toolTip.SetToolTip(outputPathSelector, $"Recordings are saved to: {outputDirectory}");
         toolTip.SetToolTip(browseButton, "Choose the folder where recordings are saved.");
-    }
-
-    private void QueueDiagnosticsRefresh()
-    {
-        if (previewMode)
-        {
-            ApplyStaticDiagnostics();
-            return;
-        }
-
-        var generation = ++diagnosticsProbeGeneration;
-        var probePlayback = selectedMode == CaptureMode.System;
-        var preferredDeviceId = probePlayback ? selectedPlaybackDeviceId : selectedMicrophoneDeviceId;
-
-        // The probe touches COM and the device topology; run it off the UI thread
-        // and drop stale results when the selection changed in the meantime.
-        Task.Run(() => probePlayback
-            ? AudioEndpointDiagnostics.GetPlayback(preferredDeviceId)
-            : AudioEndpointDiagnostics.GetMicrophone(preferredDeviceId))
-            .ContinueWith(task =>
-            {
-                if (task.Status != TaskStatus.RanToCompletion
-                    || generation != diagnosticsProbeGeneration)
-                {
-                    return;
-                }
-
-                try
-                {
-                    if (IsDisposed)
-                    {
-                        return;
-                    }
-
-                    if (IsHandleCreated)
-                    {
-                        BeginInvoke(new Action(() => ApplyEndpointDiagnostics(task.Result)));
-                    }
-                    else
-                    {
-                        pendingDiagnosticsReport = task.Result;
-                    }
-                }
-                catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
-                {
-                }
-            });
-    }
-
-    private void ApplyEndpointDiagnostics(EndpointDiagnosticsReport report)
-    {
-        lastEndpointReport = report;
-        diagnosticsLabel.Text = BuildPreFlightDiagnosticsText(report);
-        toolTip.SetToolTip(diagnosticsLabel, BuildPreFlightDiagnosticsTooltip(report));
-    }
-
-    private string BuildPreFlightDiagnosticsText(EndpointDiagnosticsReport report)
-    {
-        var lines = new List<string> { "Audio" };
-
-        if (report.IsAvailable)
-        {
-            lines.Add($"Input: {Truncate(report.FriendlyName ?? "<unknown>", 44)}");
-            if (report.Transport != AudioEndpointTransport.Unknown)
-            {
-                lines.Add($"Connection: {report.Transport.ToDisplayName()}");
-            }
-        }
-        else
-        {
-            lines.Add("Input: unavailable — recording will be blocked");
-        }
-
-        if (selectedMode == CaptureMode.Both)
-        {
-            lines.Add($"System: {Truncate(selectedPlaybackDeviceName ?? "Windows default playback device", 40)}");
-        }
-
-        lines.Add($"Signal: {DescribeSignalFormat(report)}");
-        lines.Add($"Capture: {DescribePlannedCaptureState()}");
-        lines.Add($"Output: {DescribeOutputProfile(selectedFormat)}");
-
-        var warning = report.BuildQualityWarning();
-        if (warning is not null)
-        {
-            lines.Add($"(!) {warning}");
-        }
-        else if (report.IsAvailable && EndpointQualityClassifier.IsFullBandwidth(report.MixSampleRate))
-        {
-            lines.Add("Quality: OK");
-        }
-
-        return string.Join(Environment.NewLine, lines);
-    }
-
-    private string BuildPreFlightDiagnosticsTooltip(EndpointDiagnosticsReport report)
-    {
-        var details = new List<string>
-        {
-            $"Selected device: {(report.IsWindowsDefault ? "Windows default" : report.PreferredDeviceId ?? "<none>")}",
-            $"Used endpoint: {(report.IsAvailable ? report.FriendlyName : "unavailable")}",
-            $"Endpoint ID: {report.EndpointId ?? "<n/a>"}",
-            $"Endpoint state: {report.DeviceState ?? "<n/a>"}",
-            $"Data flow: {report.DataFlow}; {report.RoleDescription}",
-            $"Transport: {report.Transport.ToDisplayName()}",
-            $"Form factor: {report.FormFactor ?? "<unknown>"}",
-            $"Native/mix format: {(report.IsAvailable ? $"{report.MixSampleRate} Hz, {report.MixChannels} channel(s), {report.MixBitsPerSample}-bit, {report.MixFormatDescription ?? "unknown"}{(report.MixChannelMask is { } mask ? $", channel mask 0x{mask:X8}" : string.Empty)}" : "n/a")}",
-            $"Capture request: {RecordingOutputProfile.SampleRateKhz} mono, RAW stream options (Windows adaptive processing bypassed when accepted)",
-            $"Output: {DescribeOutputProfile(selectedFormat)}, encoded once from 16-bit PCM",
-        };
-        if (report.Error is not null)
-        {
-            details.Add($"Probe error: {report.Error}");
-        }
-
-        return string.Join(Environment.NewLine, details);
-    }
-
-    private static string DescribeSignalFormat(EndpointDiagnosticsReport report)
-    {
-        if (!report.IsAvailable || report.MixSampleRate <= 0)
-        {
-            return "n/a";
-        }
-
-        return $"{report.MixSampleRate / 1000D:0.#} kHz · {DescribeChannels(report.MixChannels)}";
-    }
-
-    private static string DescribeChannels(short channels)
-    {
-        return channels switch
-        {
-            1 => "Mono",
-            2 => "Stereo",
-            <= 0 => "n/a",
-            _ => $"{channels} ch",
-        };
-    }
-
-    private string DescribePlannedCaptureState()
-    {
-        return selectedMode == CaptureMode.System
-            ? "48 kHz · Mono · Loopback"
-            : "48 kHz · Mono · RAW";
-    }
-
-    private static string DescribeOutputProfile(OutputFormat format)
-    {
-        return format == OutputFormat.Mp3
-            ? $"MP3 · {RecordingOutputProfile.SampleRateKhz} · Mono · {RecordingOutputProfile.Mp3BitRateKbps} kbps"
-            : $"WAV · {RecordingOutputProfile.SampleRateKhz} · Mono · PCM16";
-    }
-
-    private void ApplyRecordingDiagnostics()
-    {
-        var report = lastEndpointReport;
-        var lines = new List<string> { "Audio" };
-
-        if (selectedMode is CaptureMode.Microphone or CaptureMode.Both)
-        {
-            lines.Add($"Input: {Truncate(captureService.ActiveMicrophoneDeviceName ?? "<unknown>", 44)}");
-            if (report is { IsAvailable: true } && report.Transport != AudioEndpointTransport.Unknown)
-            {
-                lines.Add($"Connection: {report.Transport.ToDisplayName()}");
-            }
-        }
-
-        if (selectedMode is CaptureMode.System or CaptureMode.Both)
-        {
-            lines.Add($"System: {Truncate(captureService.ActiveSystemDeviceName ?? "<unknown>", 44)}");
-        }
-
-        lines.Add($"Signal: {(report is { IsAvailable: true } ? DescribeSignalFormat(report) : "n/a")}");
-        lines.Add(
-            $"Capture: {DescribeCaptureState(captureService.ActiveMicrophoneFormat, captureService.ActiveMicrophoneRawActivated, isLoopback: selectedMode == CaptureMode.System)}");
-        lines.Add($"Output: {DescribeOutputProfile(selectedFormat)}");
-
-        var warning = report?.BuildQualityWarning();
-        if (warning is not null)
-        {
-            lines.Add($"(!) {warning}");
-        }
-        else if (report is { IsAvailable: true } && EndpointQualityClassifier.IsFullBandwidth(report.MixSampleRate))
-        {
-            lines.Add("Quality: OK");
-        }
-
-        diagnosticsLabel.Text = string.Join(Environment.NewLine, lines);
-
-        var details = new List<string>
-        {
-            $"Selected device: {(report is { IsWindowsDefault: false } ? report.PreferredDeviceId ?? "<none>" : "Windows default")}",
-            $"Used endpoint: {(report?.IsAvailable == true ? report.FriendlyName : captureService.ActiveMicrophoneDeviceName ?? "unavailable")}",
-            $"Endpoint ID: {report?.EndpointId ?? captureService.ActiveMicrophoneDeviceId ?? "<n/a>"}",
-            $"Endpoint state: {report?.DeviceState ?? "<n/a>"}",
-            $"Data flow: {report?.DataFlow ?? "<n/a>"}; {report?.RoleDescription ?? "<n/a>"}",
-            $"Transport detection: {report?.Transport.ToDisplayName() ?? "Unknown"} (PKEY_Device_EnumeratorName)",
-            $"Form factor: {report?.FormFactor ?? "<unknown>"}",
-            $"Native/mix format: {(report is { IsAvailable: true } ? $"{report.MixSampleRate} Hz, {report.MixChannels} channel(s), {report.MixBitsPerSample}-bit, {report.MixFormatDescription ?? "unknown"}{(report.MixChannelMask is { } mask ? $", channel mask 0x{mask:X8}" : string.Empty)}" : "n/a")}",
-            $"Initialized capture format: {captureService.ActiveMicrophoneFormat?.Description ?? "<n/a>"}",
-            $"RAW: Requested={(captureService.ActiveMicrophoneRawActivated is not null)}; Activated={captureService.ActiveMicrophoneRawActivated?.ToString() ?? "<n/a>"}",
-            $"Output: {DescribeOutputProfile(selectedFormat)} encoded once from 16-bit PCM",
-        };
-        toolTip.SetToolTip(diagnosticsLabel, string.Join(Environment.NewLine, details));
-    }
-
-    private static string DescribeCaptureState(CapturedStreamFormat? format, bool? rawActivated, bool isLoopback)
-    {
-        if (format is not { } activeFormat)
-        {
-            return isLoopback
-                ? "48 kHz · Mono · Loopback"
-                : "48 kHz · Mono · RAW";
-        }
-
-        var rate = $"{activeFormat.SampleRate / 1000D:0.#} kHz";
-        var channels = activeFormat.Channels == 1 ? "Mono" : $"{activeFormat.Channels} ch";
-        if (isLoopback)
-        {
-            return $"{rate} · {channels} · Loopback";
-        }
-
-        return rawActivated switch
-        {
-            true => $"{rate} · {channels} · RAW",
-            false => $"{rate} · {channels} · Shared (Windows processing may be active)",
-            _ => $"{rate} · {channels}",
-        };
-    }
-
-    private void ApplyStaticDiagnostics()
-    {
-        diagnosticsLabel.Text = $"Output: {DescribeOutputProfile(selectedFormat)}";
-        toolTip.SetToolTip(diagnosticsLabel, "Diagnostics are available when the app runs normally.");
-    }
-
-    private static string Truncate(string value, int maxLength)
-    {
-        return value.Length <= maxLength ? value : value.Substring(0, maxLength - 3) + "...";
     }
 
     private void UpdateStatus(string? text, Color color, string? details)
@@ -1089,7 +871,6 @@ public sealed class MainForm : Form
                 AppLogger.Info("Microphone selection reset to Windows default.");
                 SaveSettings();
                 UpdateModeText();
-                QueueDiagnosticsRefresh();
             }));
 
         if (microphones.Count > 0)
@@ -1119,7 +900,6 @@ public sealed class MainForm : Form
                     AppLogger.Info($"Microphone selection changed to {localMicrophone.DisplayName} [{localMicrophone.Id}]");
                     SaveSettings();
                     UpdateModeText();
-                    QueueDiagnosticsRefresh();
                 }));
         }
 
@@ -1201,7 +981,6 @@ public sealed class MainForm : Form
                 AppLogger.Info("System audio selection reset to Windows default.");
                 SaveSettings();
                 UpdateModeText();
-                QueueDiagnosticsRefresh();
             }));
 
         if (playbackDevices.Count > 0)
@@ -1231,7 +1010,6 @@ public sealed class MainForm : Form
                     AppLogger.Info($"System audio selection changed to {localDevice.DisplayName} [{localDevice.Id}]");
                     SaveSettings();
                     UpdateModeText();
-                    QueueDiagnosticsRefresh();
                 }));
         }
 
@@ -1324,7 +1102,19 @@ public sealed class MainForm : Form
             AppPaths.RecordingDirectory,
             onOutputDirectoryChanged: ApplyOutputDirectorySelection,
             openAudioFiles: OpenAudioFolder,
-            openLogFiles: OpenLogFiles);
+            openLogFiles: OpenLogFiles,
+            openDiagnostics: ShowDiagnostics);
+        dialog.ShowDialog(this);
+    }
+
+    private void ShowDiagnostics()
+    {
+        AppLogger.Info("Opening audio diagnostics dialog.");
+        using var dialog = new DiagnosticsDialog(
+            selectedMicrophoneDeviceId,
+            selectedPlaybackDeviceId,
+            selectedFormat,
+            captureService);
         dialog.ShowDialog(this);
     }
 
@@ -1402,8 +1192,10 @@ public sealed class MainForm : Form
 
     private void UpdateWindowRegion()
     {
-        using var path = CreateRoundedRectangle(new Rectangle(0, 0, Width, Height), CardRadius);
-        Region = new Region(path);
+        // The window now uses a standard sizable frame, so no region is applied:
+        // a rounded hit-test region would break edge resizing and maximize. The
+        // painted card look stays inside the client area.
+        Region = null;
     }
 
     private static string FormatElapsed(TimeSpan duration)

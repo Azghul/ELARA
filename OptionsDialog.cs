@@ -6,6 +6,7 @@ internal sealed class OptionsDialog : Form
     private readonly Action<string?> onOutputDirectoryChanged;
     private readonly Action openAudioFiles;
     private readonly Action openLogFiles;
+    private readonly Action openDiagnostics;
     private readonly TextBox outputPathBox;
     private readonly ToolTip toolTip = new() { ShowAlways = true };
 
@@ -14,12 +15,14 @@ internal sealed class OptionsDialog : Form
         string defaultOutputDirectory,
         Action<string?> onOutputDirectoryChanged,
         Action openAudioFiles,
-        Action openLogFiles)
+        Action openLogFiles,
+        Action openDiagnostics)
     {
         this.defaultOutputDirectory = defaultOutputDirectory;
         this.onOutputDirectoryChanged = onOutputDirectoryChanged;
         this.openAudioFiles = openAudioFiles;
         this.openLogFiles = openLogFiles;
+        this.openDiagnostics = openDiagnostics;
 
         Text = "Options";
         StartPosition = FormStartPosition.CenterParent;
@@ -28,7 +31,7 @@ internal sealed class OptionsDialog : Form
         MinimizeBox = false;
         ShowIcon = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(460, 236);
+        ClientSize = new Size(460, 300);
         BackColor = Color.FromArgb(15, 19, 40);
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
         var fieldColor = Color.FromArgb(235, 238, 248);
@@ -83,7 +86,19 @@ internal sealed class OptionsDialog : Form
         var openLogsButton = CreateDialogButton("Open Log Files", new Point(180, 182), 150);
         openLogsButton.Click += (_, _) => openLogFiles();
 
-        var closeButton = CreateDialogButton("Close", new Point(338, 184), 100);
+        var diagnosticsHeader = new Label
+        {
+            Text = "Diagnostics",
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold, GraphicsUnit.Point),
+            ForeColor = Color.FromArgb(195, 201, 231),
+            Location = new Point(22, 228),
+        };
+
+        var diagnosticsButton = CreateDialogButton("Audio Diagnostics...", new Point(22, 254), 150);
+        diagnosticsButton.Click += (_, _) => openDiagnostics();
+
+        var closeButton = CreateDialogButton("Close", new Point(338, 254), 100);
         closeButton.BackColor = Color.FromArgb(101, 77, 245);
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.DialogResult = DialogResult.OK;
@@ -96,6 +111,8 @@ internal sealed class OptionsDialog : Form
         Controls.Add(actionsHeader);
         Controls.Add(openAudioButton);
         Controls.Add(openLogsButton);
+        Controls.Add(diagnosticsHeader);
+        Controls.Add(diagnosticsButton);
         Controls.Add(closeButton);
 
         AcceptButton = closeButton;
