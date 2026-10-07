@@ -4,3 +4,4 @@ artifacts/ui-previews/
 artifacts/release/
 artifacts/publish-win-x64/
 artifacts/*.zip
+nohup.out
