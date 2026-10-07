@@ -6,6 +6,18 @@ internal sealed class AboutDialog : Form
 {
     private const string UpstreamUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
 
+    private readonly Label title;
+    private readonly Label versionLine;
+    private readonly Label subtitle;
+    private readonly Label description;
+    private readonly Label originsNotice;
+    private readonly Label licenseNotice;
+    private readonly Label copyright;
+    private readonly LinkLabel linkLabel;
+    private readonly LinkLabel upstreamLinkLabel;
+    private readonly Button openLogsButton;
+    private readonly Button closeButton;
+
     public AboutDialog(string githubUrl, string logDirectory)
     {
         Text = "About ELARA";
@@ -16,44 +28,44 @@ internal sealed class AboutDialog : Form
         ShowIcon = false;
         ShowInTaskbar = false;
         ClientSize = new Size(420, 320);
-        BackColor = Color.FromArgb(15, 19, 40);
+        BackColor = ThemeManager.Current.WindowBack;
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
         Icon = AppIcon.Load();
 
-        var title = new Label
+        title = new Label
         {
             Text = "ELARA",
             AutoSize = true,
-            ForeColor = Color.FromArgb(247, 248, 255),
+            ForeColor = ThemeManager.Current.TextTitle,
             Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold, GraphicsUnit.Point),
             Location = new Point(22, 16),
         };
 
-        var versionLine = new Label
+        versionLine = new Label
         {
             Text = AppVersion.DisplayLabel,
             AutoSize = true,
-            ForeColor = Color.FromArgb(150, 158, 198),
+            ForeColor = ThemeManager.Current.TextMuted,
             Location = new Point(28 + title.PreferredWidth, 22),
         };
 
-        var subtitle = new Label
+        subtitle = new Label
         {
             Text = "Easy Local Audio Recording App",
             AutoSize = true,
-            ForeColor = Color.FromArgb(195, 201, 231),
+            ForeColor = ThemeManager.Current.TextHeader,
             Location = new Point(24, 50),
         };
 
-        var description = new Label
+        description = new Label
         {
             Text = "A lightweight Windows recorder for microphone and system audio.",
             AutoSize = true,
-            ForeColor = Color.FromArgb(195, 201, 231),
+            ForeColor = ThemeManager.Current.TextHeader,
             Location = new Point(24, 74),
         };
 
-        var originsNotice = new Label
+        originsNotice = new Label
         {
             Text = "Originally based on SimpleAudioRecorder by SickPuppyCoding. " +
                    "This version has been extended substantially — UI, device selection, " +
@@ -61,33 +73,33 @@ internal sealed class AboutDialog : Form
                    "recording-safety behaviour — and is developed independently.",
             AutoSize = true,
             MaximumSize = new Size(376, 0),
-            ForeColor = Color.FromArgb(195, 201, 231),
+            ForeColor = ThemeManager.Current.TextHeader,
             Location = new Point(24, 98),
         };
 
-        var licenseNotice = new Label
+        licenseNotice = new Label
         {
             Text = "Uses NAudio (MIT), NAudio.Lame (MIT) and LAME libmp3lame (GNU Library GPL v2). See README.",
             AutoSize = true,
-            ForeColor = Color.FromArgb(150, 158, 198),
+            ForeColor = ThemeManager.Current.TextMuted,
             Location = new Point(24, 162),
         };
 
-        var copyright = new Label
+        copyright = new Label
         {
             Text = "Original SimpleAudioRecorder Copyright (c) SickPuppyCoding — MIT.",
             AutoSize = true,
-            ForeColor = Color.FromArgb(150, 158, 198),
+            ForeColor = ThemeManager.Current.TextMuted,
             Location = new Point(24, 184),
         };
 
-        var linkLabel = new LinkLabel
+        linkLabel = new LinkLabel
         {
             Text = githubUrl,
             AutoSize = true,
-            LinkColor = Color.FromArgb(145, 136, 255),
-            ActiveLinkColor = Color.FromArgb(186, 176, 255),
-            VisitedLinkColor = Color.FromArgb(145, 136, 255),
+            LinkColor = ThemeManager.Current.LinkColor,
+            ActiveLinkColor = ThemeManager.Current.LinkActiveColor,
+            VisitedLinkColor = ThemeManager.Current.LinkColor,
             Location = new Point(24, 212),
             LinkBehavior = LinkBehavior.HoverUnderline,
         };
@@ -96,13 +108,13 @@ internal sealed class AboutDialog : Form
             Process.Start(new ProcessStartInfo(githubUrl) { UseShellExecute = true });
         };
 
-        var upstreamLinkLabel = new LinkLabel
+        upstreamLinkLabel = new LinkLabel
         {
             Text = "Original project: " + UpstreamUrl,
             AutoSize = true,
-            LinkColor = Color.FromArgb(145, 136, 255),
-            ActiveLinkColor = Color.FromArgb(186, 176, 255),
-            VisitedLinkColor = Color.FromArgb(145, 136, 255),
+            LinkColor = ThemeManager.Current.LinkColor,
+            ActiveLinkColor = ThemeManager.Current.LinkActiveColor,
+            VisitedLinkColor = ThemeManager.Current.LinkColor,
             Location = new Point(24, 234),
             LinkBehavior = LinkBehavior.HoverUnderline,
         };
@@ -111,29 +123,29 @@ internal sealed class AboutDialog : Form
             Process.Start(new ProcessStartInfo(UpstreamUrl) { UseShellExecute = true });
         };
 
-        var openLogsButton = new Button
+        openLogsButton = new Button
         {
             Text = "Open Log Files",
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(33, 39, 76),
-            ForeColor = Color.White,
+            BackColor = ThemeManager.Current.ButtonBack,
+            ForeColor = ThemeManager.Current.ButtonText,
             Size = new Size(126, 34),
             Location = new Point(24, ClientSize.Height - 54),
         };
-        openLogsButton.FlatAppearance.BorderColor = Color.FromArgb(66, 73, 109);
+        openLogsButton.FlatAppearance.BorderColor = ThemeManager.Current.ButtonBorder;
         openLogsButton.Click += (_, _) =>
         {
             Directory.CreateDirectory(logDirectory);
             Process.Start(new ProcessStartInfo(logDirectory) { UseShellExecute = true });
         };
 
-        var closeButton = new Button
+        closeButton = new Button
         {
             Text = "Close",
             DialogResult = DialogResult.OK,
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(101, 77, 245),
-            ForeColor = Color.White,
+            BackColor = ThemeManager.Current.Accent,
+            ForeColor = ThemeManager.Current.TextOnAccent,
             Size = new Size(102, 34),
             Location = new Point(ClientSize.Width - 124, ClientSize.Height - 54),
         };
@@ -152,5 +164,60 @@ internal sealed class AboutDialog : Form
         Controls.Add(closeButton);
 
         AcceptButton = closeButton;
+
+        ApplyTheme();
+        ThemeManager.ThemeChanged += HandleThemeChanged;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ThemeManager.ApplyTitleBarTheme(this);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        base.OnFormClosed(e);
+        ThemeManager.ThemeChanged -= HandleThemeChanged;
+    }
+
+    /// <summary>Re-applies the theme to the dialog when the active theme changes.</summary>
+    private void ApplyTheme()
+    {
+        var palette = ThemeManager.Current;
+        BackColor = palette.WindowBack;
+        title.ForeColor = palette.TextTitle;
+        versionLine.ForeColor = palette.TextMuted;
+        subtitle.ForeColor = palette.TextHeader;
+        description.ForeColor = palette.TextHeader;
+        originsNotice.ForeColor = palette.TextHeader;
+        licenseNotice.ForeColor = palette.TextMuted;
+        copyright.ForeColor = palette.TextMuted;
+        linkLabel.LinkColor = palette.LinkColor;
+        linkLabel.ActiveLinkColor = palette.LinkActiveColor;
+        linkLabel.VisitedLinkColor = palette.LinkColor;
+        upstreamLinkLabel.LinkColor = palette.LinkColor;
+        upstreamLinkLabel.ActiveLinkColor = palette.LinkActiveColor;
+        upstreamLinkLabel.VisitedLinkColor = palette.LinkColor;
+
+        openLogsButton.BackColor = palette.ButtonBack;
+        openLogsButton.ForeColor = palette.ButtonText;
+        openLogsButton.FlatAppearance.BorderColor = palette.ButtonBorder;
+        closeButton.BackColor = palette.Accent;
+        closeButton.ForeColor = palette.TextOnAccent;
+
+        ThemeManager.ApplyTitleBarTheme(this);
+        Invalidate(true);
+    }
+
+    private void HandleThemeChanged()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(HandleThemeChanged);
+            return;
+        }
+
+        ApplyTheme();
     }
 }

@@ -2,6 +2,16 @@
 
 # 1.1.0
 
+- Adaptive theme system: System (new default; follows the Windows app
+  light/dark mode live) plus the manual themes Midnight, Graphite, Light,
+  Ocean, Teal, Ember and Rose; the main window, Options, Diagnostics, About
+  and all menus re-theme at runtime without a restart and the native title
+  bar follows dark/light best-effort; an optional "Use Windows accent color"
+  replaces the theme accent with the Windows accent color; existing settings
+  without a Theme entry start with System; the painted second window rounding
+  was removed (Windows owns the window edge)
+- Settings persistence: recording preferences are saved load-mutate-save so
+  the theme, license acceptance and window bounds survive preference changes
 - Endpoint diagnostics (read-only, before recording starts): friendly name,
   endpoint ID, device state, data flow, selection kind (explicit device or
   Windows default multimedia role), transport when Windows reports it

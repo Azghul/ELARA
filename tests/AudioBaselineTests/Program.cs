@@ -1,4 +1,5 @@
 using ELARA;
+using System.Drawing;
 using System.Text.Json;
 
 const int sampleRate = 48_000;
@@ -309,6 +310,75 @@ try
         "settings with the legacy processing key still load");
 
     // ------------------------------------------------------------------
+    // Theme: settings defaults, parsing and resolution. Existing settings
+    // without a Theme entry resolve to System (follows the Windows app
+    // light/dark mode); the Windows accent color is off by default.
+    // ------------------------------------------------------------------
+    AssertEqual("System", new AppSettings().Theme, "settings default theme is System");
+    AssertEqual(AppTheme.System, new AppSettings().ResolveTheme(), "settings default theme resolves to System");
+    AssertEqual(false, new AppSettings().UseWindowsAccentColor, "windows accent color is disabled by default");
+
+    var noThemeJson = "{\"OutputFormat\":\"Mp3\"}";
+    var noThemeSettings = JsonSerializer.Deserialize<AppSettings>(noThemeJson) ?? new AppSettings();
+    AssertEqual(AppTheme.System, noThemeSettings.ResolveTheme(), "settings without a theme entry resolve to System");
+
+    AssertEqual(AppTheme.System, UiTheme.ParseTheme(null), "null theme parses to System");
+    AssertEqual(AppTheme.System, UiTheme.ParseTheme(string.Empty), "empty theme parses to System");
+    AssertEqual(AppTheme.System, UiTheme.ParseTheme("Nightshift"), "unknown theme parses to System");
+    AssertEqual(AppTheme.Midnight, UiTheme.ParseTheme("midnight"), "theme parsing is case-insensitive");
+    AssertEqual(AppTheme.Rose, UiTheme.ParseTheme("Rose"), "rose theme parses");
+
+    var oceanJson = JsonSerializer.Serialize(new AppSettings { Theme = "Ocean", UseWindowsAccentColor = true });
+    AssertEqual(true, oceanJson.Contains("\"Theme\":\"Ocean\""), "theme round-trips through settings JSON");
+    var oceanSettings = JsonSerializer.Deserialize<AppSettings>(oceanJson) ?? new AppSettings();
+    AssertEqual(AppTheme.Ocean, oceanSettings.ResolveTheme(), "ocean theme round-trips");
+    AssertEqual(true, oceanSettings.UseWindowsAccentColor, "windows accent color round-trips");
+
+    AssertEqual(
+        true,
+        ReferenceEquals(UiTheme.Resolve(AppTheme.System, windowsDark: true), UiTheme.Resolve(AppTheme.System, windowsDark: true)),
+        "system resolution is deterministic per windows mode");
+    AssertEqual(
+        false,
+        ReferenceEquals(UiTheme.Resolve(AppTheme.System, windowsDark: true), UiTheme.Resolve(AppTheme.System, windowsDark: false)),
+        "system follows the windows light/dark mode");
+    AssertEqual(false, UiTheme.Resolve(AppTheme.System, windowsDark: false).IsDark, "system uses the light palette on windows light");
+    AssertEqual(true, UiTheme.Resolve(AppTheme.System, windowsDark: true).IsDark, "system uses the dark palette on windows dark");
+    AssertEqual(
+        true,
+        ReferenceEquals(UiTheme.Resolve(AppTheme.Midnight, windowsDark: true), UiTheme.Resolve(AppTheme.Midnight, windowsDark: false)),
+        "manual themes ignore the windows mode");
+    AssertEqual("System (Windows)", UiTheme.GetThemeDisplayName(AppTheme.System), "system display name");
+    AssertEqual("Ember", UiTheme.GetThemeDisplayName(AppTheme.Ember), "ember display name");
+
+    foreach (var theme in new[] { AppTheme.Midnight, AppTheme.Graphite, AppTheme.Light, AppTheme.Ocean, AppTheme.Teal, AppTheme.Ember, AppTheme.Rose })
+    {
+        var palette = UiTheme.Resolve(theme, windowsDark: false);
+        AssertEqual(theme.ToString(), palette.DisplayName, $"{theme} palette display name");
+        AssertEqual(theme == AppTheme.Light, !palette.IsDark, $"{theme} palette dark flag");
+        foreach (var kind in Enum.GetValues<StatusKind>())
+        {
+            AssertEqual(false, palette.StatusColor(kind).IsEmpty, $"{theme} status color for {kind}");
+        }
+    }
+
+    var midnightPalette = UiTheme.Resolve(AppTheme.Midnight, windowsDark: true);
+    var accentColor = Color.FromArgb(220, 120, 40);
+    var accented = UiTheme.WithWindowsAccent(midnightPalette, accentColor);
+    AssertEqual(accentColor, accented.Accent, "windows accent replaces the accent token");
+    AssertEqual(midnightPalette.WindowBack, accented.WindowBack, "windows accent keeps the window background");
+    AssertEqual(midnightPalette.FieldBack, accented.FieldBack, "windows accent keeps the field background");
+    AssertEqual(midnightPalette.TextTitle, accented.TextTitle, "windows accent keeps the title text");
+    AssertEqual(midnightPalette.StatusRecording, accented.StatusRecording, "windows accent keeps semantic status colors");
+    AssertEqual(false, accented.StatusIdle.Equals(midnightPalette.StatusIdle), "windows accent reuses the accent for the idle status");
+
+    var lightAccent = UiTheme.WithWindowsAccent(midnightPalette, Color.FromArgb(244, 208, 63));
+    AssertEqual(true, UiTheme.Luminance(lightAccent.Accent) >= 0.62F, "light accent passes the luminance threshold");
+    AssertEqual(Color.FromArgb(28, 28, 32), lightAccent.TextOnAccent, "light accent uses dark text on accent");
+    var darkAccent = UiTheme.WithWindowsAccent(midnightPalette, Color.FromArgb(30, 80, 220));
+    AssertEqual(Color.White, darkAccent.TextOnAccent, "dark accent uses white text on accent");
+
+    // ------------------------------------------------------------------
     // Static UI/packaging checks: the main window is resizable, the visible
     // diagnostics area is gone from the main window, diagnostics live behind
     // Options, and the publish script produces both ZIP variants. Plain
@@ -334,6 +404,10 @@ try
     AssertEqual(true, mainFormSource.Contains("DiagnosticsDialog"), "main window opens the diagnostics dialog");
     AssertEqual(true, mainFormSource.Contains("SaveWindowBounds") && mainFormSource.Contains("RestoreWindowBounds"), "window bounds are persisted with screen validation");
     AssertEqual(true, optionsSource.Contains("Audio Diagnostics..."), "options dialog exposes the diagnostics dialog");
+    AssertEqual(true, optionsSource.Contains("Appearance"), "options dialog has an appearance section");
+    AssertEqual(true, optionsSource.Contains("Use Windows accent color"), "options dialog offers the windows accent color option");
+    AssertEqual(true, mainFormSource.Contains("ThemeManager.ThemeChanged += HandleThemeChanged"), "main window follows live theme changes");
+    AssertEqual(true, mainFormSource.Contains("ThemeManager.ApplyTitleBarTheme"), "main window paints the native title bar to match the theme");
     AssertEqual(true, diagnosticsSource.Contains("Clipboard.SetText"), "diagnostics dialog can copy the report to the clipboard");
     AssertEqual(true, diagnosticsSource.Contains("Refresh"), "diagnostics dialog can refresh");
     AssertEqual(true, diagnosticsSource.Contains("AudioEndpointDiagnostics.GetMicrophone"), "diagnostics dialog reuses the shared endpoint diagnostics logic");

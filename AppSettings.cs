@@ -30,11 +30,26 @@ internal sealed class AppSettings
     [JsonPropertyName("OutputFormat")]
     public string Format { get; set; } = nameof(OutputFormat.Mp3);
 
+    /// <summary>
+    /// Selected appearance theme (System | Midnight | Graphite | Light | Ocean |
+    /// Teal | Ember | Rose). Settings without this key resolve to System, which
+    /// follows the Windows app light/dark mode.
+    /// </summary>
+    public string Theme { get; set; } = nameof(AppTheme.System);
+
+    /// <summary>When true, the Windows accent color replaces the theme accent.</summary>
+    public bool UseWindowsAccentColor { get; set; }
+
     public OutputFormat ResolveOutputFormat()
     {
         return Enum.TryParse<OutputFormat>(Format, ignoreCase: true, out var format)
             ? format
             : OutputFormat.Mp3;
+    }
+
+    public AppTheme ResolveTheme()
+    {
+        return UiTheme.ParseTheme(Theme);
     }
 
     public static AppSettings Load()

@@ -40,6 +40,7 @@ internal static class Program
             // First-run acceptance of the Microsoft .NET Library License, which covers
             // components of the self-contained Windows distribution (e.g. coreclr.dll).
             var settings = AppSettings.Load();
+            ThemeManager.Initialize(settings.ResolveTheme(), settings.UseWindowsAccentColor);
             if (!settings.AcceptedDotNetLibraryLicense)
             {
                 AppLogger.Info("Microsoft .NET Library License acceptance required.");

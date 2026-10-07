@@ -16,6 +16,13 @@ internal sealed class DiagnosticsDialog : Form
     private readonly TextBox systemBox;
     private readonly TextBox outputBox;
     private readonly Label hintLabel;
+    private readonly Label title;
+    private readonly Label microphoneHeader;
+    private readonly Label systemHeader;
+    private readonly Label outputHeader;
+    private readonly Button refreshButton;
+    private readonly Button copyButton;
+    private readonly Button closeButton;
     private bool probeRunning;
 
     public DiagnosticsDialog(
@@ -37,23 +44,15 @@ internal sealed class DiagnosticsDialog : Form
         ShowIcon = false;
         ShowInTaskbar = false;
         ClientSize = new Size(600, 584);
-        BackColor = Color.FromArgb(15, 19, 40);
+        BackColor = ThemeManager.Current.WindowBack;
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
 
-        var title = new Label
-        {
-            Text = "Audio Diagnostics",
-            AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 14F, FontStyle.Bold, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(247, 248, 255),
-            Location = new Point(22, 14),
-        };
-
-        var microphoneHeader = CreateSectionHeader("Microphone", 52);
+        title = CreateSectionHeader("Audio Diagnostics", 14F, ThemeManager.Current.TextTitle, new Point(22, 14));
+        microphoneHeader = CreateSectionHeader("Microphone", 10F, ThemeManager.Current.TextHeader, new Point(22, 52));
         microphoneBox = CreateBox(new Point(22, 76), new Size(556, 178));
-        var systemHeader = CreateSectionHeader("System audio", 262);
+        systemHeader = CreateSectionHeader("System audio", 10F, ThemeManager.Current.TextHeader, new Point(22, 262));
         systemBox = CreateBox(new Point(22, 286), new Size(556, 118));
-        var outputHeader = CreateSectionHeader("Output", 412);
+        outputHeader = CreateSectionHeader("Output", 10F, ThemeManager.Current.TextHeader, new Point(22, 412));
         outputBox = CreateBox(new Point(22, 436), new Size(556, 40));
         outputBox.Text = DescribeOutput();
 
@@ -61,18 +60,17 @@ internal sealed class DiagnosticsDialog : Form
         {
             Text = "Read-only view. Nothing is changed by this dialog.",
             AutoSize = true,
-            ForeColor = Color.FromArgb(150, 158, 198),
+            ForeColor = ThemeManager.Current.TextMuted,
             Location = new Point(22, 486),
         };
 
-        var refreshButton = CreateDialogButton("Refresh", new Point(22, 520), 120);
+        refreshButton = CreateDialogButton("Refresh", new Point(22, 520), 120);
         refreshButton.Click += (_, _) => RefreshDiagnostics();
 
-        var copyButton = CreateDialogButton("Copy Diagnostics", new Point(150, 520), 160);
+        copyButton = CreateDialogButton("Copy Diagnostics", new Point(150, 520), 160);
         copyButton.Click += (_, _) => CopyDiagnostics();
 
-        var closeButton = CreateDialogButton("Close", new Point(478, 520), 100);
-        closeButton.BackColor = Color.FromArgb(101, 77, 245);
+        closeButton = CreateDialogButton("Close", new Point(478, 520), 100);
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.DialogResult = DialogResult.OK;
 
@@ -89,6 +87,58 @@ internal sealed class DiagnosticsDialog : Form
         Controls.Add(closeButton);
 
         AcceptButton = closeButton;
+
+        ApplyTheme();
+        ThemeManager.ThemeChanged += HandleThemeChanged;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ThemeManager.ApplyTitleBarTheme(this);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        base.OnFormClosed(e);
+        ThemeManager.ThemeChanged -= HandleThemeChanged;
+    }
+
+    /// <summary>Re-applies the theme to the dialog when the active theme changes.</summary>
+    private void ApplyTheme()
+    {
+        var palette = ThemeManager.Current;
+        BackColor = palette.WindowBack;
+        title.ForeColor = palette.TextTitle;
+        microphoneHeader.ForeColor = palette.TextHeader;
+        systemHeader.ForeColor = palette.TextHeader;
+        outputHeader.ForeColor = palette.TextHeader;
+        hintLabel.ForeColor = palette.TextMuted;
+
+        microphoneBox.BackColor = palette.FieldBack;
+        microphoneBox.ForeColor = palette.FieldText;
+        systemBox.BackColor = palette.FieldBack;
+        systemBox.ForeColor = palette.FieldText;
+        outputBox.BackColor = palette.FieldBack;
+        outputBox.ForeColor = palette.FieldText;
+
+        ApplySecondaryButton(refreshButton, palette);
+        ApplySecondaryButton(copyButton, palette);
+        ApplyPrimaryButton(closeButton, palette);
+
+        ThemeManager.ApplyTitleBarTheme(this);
+        Invalidate(true);
+    }
+
+    private void HandleThemeChanged()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(HandleThemeChanged);
+            return;
+        }
+
+        ApplyTheme();
     }
 
     protected override void OnShown(EventArgs e)
@@ -97,15 +147,15 @@ internal sealed class DiagnosticsDialog : Form
         RefreshDiagnostics();
     }
 
-    private static Label CreateSectionHeader(string text, int top)
+    private static Label CreateSectionHeader(string text, float size, Color color, Point location)
     {
         return new Label
         {
             Text = text,
             AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(195, 201, 231),
-            Location = new Point(22, top),
+            Font = new Font("Segoe UI Semibold", size, FontStyle.Bold, GraphicsUnit.Point),
+            ForeColor = color,
+            Location = location,
         };
     }
 
@@ -116,8 +166,8 @@ internal sealed class DiagnosticsDialog : Form
             ReadOnly = true,
             Multiline = true,
             ScrollBars = ScrollBars.Vertical,
-            BackColor = Color.FromArgb(24, 29, 56),
-            ForeColor = Color.FromArgb(235, 238, 248),
+            BackColor = ThemeManager.Current.FieldBack,
+            ForeColor = ThemeManager.Current.FieldText,
             BorderStyle = BorderStyle.FixedSingle,
             Font = new Font("Cascadia Mono", 8.25F, FontStyle.Regular, GraphicsUnit.Point),
             Location = location,
@@ -131,14 +181,28 @@ internal sealed class DiagnosticsDialog : Form
         {
             Text = text,
             FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(33, 39, 76),
-            ForeColor = Color.White,
+            BackColor = ThemeManager.Current.ButtonBack,
+            ForeColor = ThemeManager.Current.ButtonText,
             Size = new Size(width, 32),
             Location = location,
             UseVisualStyleBackColor = false,
         };
-        button.FlatAppearance.BorderColor = Color.FromArgb(66, 73, 109);
+        button.FlatAppearance.BorderColor = ThemeManager.Current.ButtonBorder;
         return button;
+    }
+
+    private static void ApplySecondaryButton(Button button, UiThemePalette palette)
+    {
+        button.BackColor = palette.ButtonBack;
+        button.ForeColor = palette.ButtonText;
+        button.FlatAppearance.BorderColor = palette.ButtonBorder;
+    }
+
+    private static void ApplyPrimaryButton(Button button, UiThemePalette palette)
+    {
+        button.BackColor = palette.Accent;
+        button.ForeColor = palette.TextOnAccent;
+        button.FlatAppearance.BorderSize = 0;
     }
 
     private void RefreshDiagnostics()

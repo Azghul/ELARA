@@ -9,7 +9,6 @@ public sealed class MainForm : Form
 {
     private const string GitHubUrl = "https://github.com/Azghul/ELARA";
     private const string UpstreamGitHubUrl = "https://github.com/SickPuppyCoding/SimpleAudioRecorder";
-    private const float CardRadius = 18F;
 
     private readonly AudioCaptureService captureService = new();
     private readonly System.Windows.Forms.Timer uiTimer = new() { Interval = 90 };
@@ -53,6 +52,7 @@ public sealed class MainForm : Form
     private bool previewMode;
     private bool previewRecording;
     private bool recordingOperationInProgress;
+    private StatusKind lastStatusKind = StatusKind.Idle;
 
     public MainForm()
     {
@@ -63,7 +63,7 @@ public sealed class MainForm : Form
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = true;
         MinimizeBox = true;
-        BackColor = Color.FromArgb(13, 17, 39);
+        BackColor = ThemeManager.Current.WindowBack;
         Font = new Font("Segoe UI", 10F, FontStyle.Regular, GraphicsUnit.Point);
         DoubleBuffered = true;
         Padding = new Padding(18, 16, 18, 18);
@@ -76,8 +76,11 @@ public sealed class MainForm : Form
         AttachContextMenu(this, appMenu);
         AttachDragBehavior(this);
         ApplyVisualState();
-        UpdateStatus(null, default, null);
+        UpdateStatus(null, StatusKind.Idle, null);
         UpdateModeText();
+
+        ApplyTheme();
+        ThemeManager.ThemeChanged += HandleThemeChanged;
 
         uiTimer.Tick += HandleUiTick;
         recordButton.Click += async (_, _) => await ToggleRecordingAsync();
@@ -144,6 +147,18 @@ public sealed class MainForm : Form
         base.OnFormClosing(e);
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ThemeManager.ApplyTitleBarTheme(this);
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        base.OnFormClosed(e);
+        ThemeManager.ThemeChanged -= HandleThemeChanged;
+    }
+
     private bool TryStopAndSaveRecordingBeforeClose()
     {
         try
@@ -175,13 +190,11 @@ public sealed class MainForm : Form
 
     protected override void OnPaint(PaintEventArgs e)
     {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        using var path = CreateRoundedRectangle(ClientRectangle, CardRadius);
+        // Windows owns the window edge (including its rounding on Windows 11);
+        // ELARA fills the client area plainly instead of painting a second,
+        // rounded frame inside it.
         using var backgroundBrush = new SolidBrush(BackColor);
-        using var borderPen = new Pen(Color.FromArgb(49, 57, 96));
-
-        e.Graphics.FillPath(backgroundBrush, path);
-        e.Graphics.DrawPath(borderPen, path);
+        e.Graphics.FillRectangle(backgroundBrush, ClientRectangle);
         base.OnPaint(e);
     }
 
@@ -194,7 +207,7 @@ public sealed class MainForm : Form
         timerLabel.Text = state.TimerText;
         levelMeter.SetPreviewLevels(state.Levels);
         UpdateModeText();
-        UpdateStatus(state.StatusText, state.StatusColor, state.StatusDetails);
+        UpdateStatus(state.StatusText, state.Status, state.StatusDetails);
         ApplyVisualState();
         Refresh();
     }
@@ -203,28 +216,28 @@ public sealed class MainForm : Form
     {
         titleHeader.AutoSize = true;
         titleHeader.Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
-        titleHeader.ForeColor = Color.FromArgb(247, 248, 255);
+        titleHeader.ForeColor = ThemeManager.Current.TextTitle;
         titleHeader.BackColor = Color.Transparent;
         titleHeader.Text = "ELARA";
 
         versionLabel.AutoSize = true;
         versionLabel.Font = new Font("Segoe UI", 8F, FontStyle.Regular, GraphicsUnit.Point);
-        versionLabel.ForeColor = Color.FromArgb(150, 158, 198);
+        versionLabel.ForeColor = ThemeManager.Current.TextMuted;
         versionLabel.BackColor = Color.Transparent;
         versionLabel.Text = AppVersion.DisplayLabel;
 
         timerLabel.AutoSize = false;
         timerLabel.Font = new Font("Cascadia Mono", 28F, FontStyle.Bold, GraphicsUnit.Point);
-        timerLabel.ForeColor = Color.FromArgb(250, 251, 255);
+        timerLabel.ForeColor = ThemeManager.Current.TextTitle;
         timerLabel.TextAlign = ContentAlignment.MiddleCenter;
         timerLabel.Text = "00:00";
         timerLabel.BackColor = Color.Transparent;
 
         openLink.AutoSize = true;
         openLink.Text = "Open Audio Files";
-        openLink.ActiveLinkColor = Color.FromArgb(187, 176, 255);
-        openLink.LinkColor = Color.FromArgb(145, 136, 255);
-        openLink.VisitedLinkColor = openLink.LinkColor;
+        openLink.ActiveLinkColor = ThemeManager.Current.LinkActiveColor;
+        openLink.LinkColor = ThemeManager.Current.LinkColor;
+        openLink.VisitedLinkColor = ThemeManager.Current.LinkColor;
         openLink.LinkBehavior = LinkBehavior.HoverUnderline;
         openLink.BackColor = Color.Transparent;
         openLink.TabStop = false;
@@ -275,7 +288,7 @@ public sealed class MainForm : Form
             Text = text,
             AutoSize = true,
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(150, 158, 198),
+            ForeColor = ThemeManager.Current.TextMuted,
             BackColor = Color.Transparent,
         };
     }
@@ -310,7 +323,7 @@ public sealed class MainForm : Form
                     selectedMode = localMode;
                     AppLogger.Info($"Capture mode changed to {localMode.ToDisplayName()}.");
                     UpdateModeText();
-                    UpdateStatus(null, default, null);
+                    UpdateStatus(null, StatusKind.Idle, null);
                 }));
         }
     }
@@ -424,13 +437,24 @@ public sealed class MainForm : Form
 
     private void SaveSettings()
     {
-        new AppSettings
-        {
-            SelectedMicrophoneDeviceId = selectedMicrophoneDeviceId,
-            SelectedPlaybackDeviceId = selectedPlaybackDeviceId,
-            Format = selectedFormat.ToString(),
-            CustomOutputDirectory = captureService.CustomOutputDirectory,
-        }.Save();
+        // Load-mutate-save keeps every other persisted preference (theme, license
+        // acceptance, window bounds) intact when a recording preference changes.
+        var settings = AppSettings.Load();
+        settings.SelectedMicrophoneDeviceId = selectedMicrophoneDeviceId;
+        settings.SelectedPlaybackDeviceId = selectedPlaybackDeviceId;
+        settings.Format = selectedFormat.ToString();
+        settings.CustomOutputDirectory = captureService.CustomOutputDirectory;
+        settings.Save();
+    }
+
+    private void PersistThemePreferences()
+    {
+        var settings = AppSettings.Load();
+        settings.Theme = ThemeManager.SelectedTheme.ToString();
+        settings.UseWindowsAccentColor = ThemeManager.UseWindowsAccentColor;
+        settings.Save();
+        AppLogger.Info(
+            $"Theme preferences saved. Theme={settings.Theme}; UseWindowsAccentColor={settings.UseWindowsAccentColor}");
     }
 
     /// <summary>
@@ -570,7 +594,7 @@ public sealed class MainForm : Form
             }
 
             selectedFormat = target.Format;
-            UpdateStatus("Preparing", Color.FromArgb(255, 211, 122), "Opening the Windows audio devices and preparing the recording file.");
+            UpdateStatus("Preparing", StatusKind.Starting, "Opening the Windows audio devices and preparing the recording file.");
             AppLogger.Info(
                 $"Start requested from UI. Mode={selectedMode}; Format={selectedFormat.ToDisplayName()}; SelectedMicrophone={(selectedMicrophoneDeviceName ?? "Windows default")} [{(selectedMicrophoneDeviceId ?? "<default>")}]; SelectedPlayback={(selectedPlaybackDeviceName ?? "Windows default")} [{(selectedPlaybackDeviceId ?? "<default>")}]; OutputFile={target.OutputPath}");
             // Device enumeration and COM initialization can block for several seconds;
@@ -595,12 +619,12 @@ public sealed class MainForm : Form
                 recordingDetails += " RAW was not accepted; Windows shared-mode processing may be active.";
             }
 
-            UpdateStatus("Recording", Color.FromArgb(255, 142, 168), recordingDetails);
+            UpdateStatus("Recording", StatusKind.Recording, recordingDetails);
         }
         catch (Exception ex)
         {
             AppLogger.Error("UI start recording failed.", ex);
-            UpdateStatus("Blocked", Color.FromArgb(255, 196, 120), ex.Message);
+            UpdateStatus("Blocked", StatusKind.Blocked, ex.Message);
             MessageBox.Show(this, ex.Message, "Audio Capture Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
@@ -668,7 +692,7 @@ public sealed class MainForm : Form
     private async Task StopRecordingAsync()
     {
         recordButton.Enabled = false;
-        UpdateStatus("Saving", Color.FromArgb(255, 211, 122), "Finalizing the recording file and cleaning up the recording session.");
+        UpdateStatus("Saving", StatusKind.Saving, "Finalizing the recording file and cleaning up the recording session.");
         recordingOperationInProgress = true;
 
         try
@@ -699,7 +723,7 @@ public sealed class MainForm : Form
                 statusDetails = $"{statusDetails} A capture source stopped with an error, but the recording was saved.";
             }
 
-            UpdateStatus("Saved", Color.FromArgb(110, 230, 182), statusDetails);
+            UpdateStatus("Saved", StatusKind.Saved, statusDetails);
 
             if (info.WasRescuedToWav || info.WasRescuedToMp3 || info.HadCaptureStopErrors)
             {
@@ -718,7 +742,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             AppLogger.Error("UI stop recording failed.", ex);
-            UpdateStatus("Error", Color.FromArgb(255, 142, 168), ex.Message);
+            UpdateStatus("Error", StatusKind.Error, ex.Message);
             MessageBox.Show(this, ex.Message, "Audio Capture Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
@@ -772,18 +796,19 @@ public sealed class MainForm : Form
         toolTip.SetToolTip(browseButton, "Choose the folder where recordings are saved.");
     }
 
-    private void UpdateStatus(string? text, Color color, string? details)
+    private void UpdateStatus(string? text, StatusKind kind, string? details)
     {
+        lastStatusKind = kind;
         if (string.IsNullOrWhiteSpace(text))
         {
             statusBadge.Caption = "Ready";
-            statusBadge.AccentColor = Color.FromArgb(150, 136, 255);
+            statusBadge.AccentColor = ThemeManager.Current.StatusColor(StatusKind.Idle);
             toolTip.SetToolTip(statusBadge, "Idle. Choose mode and devices, then start recording; the file name and format are chosen before recording starts.");
         }
         else
         {
             statusBadge.Caption = text;
-            statusBadge.AccentColor = color;
+            statusBadge.AccentColor = ThemeManager.Current.StatusColor(kind);
             toolTip.SetToolTip(statusBadge, details ?? text);
         }
 
@@ -792,6 +817,57 @@ public sealed class MainForm : Form
         statusBadge.Invalidate();
         LayoutCompactControls();
         Invalidate();
+    }
+
+    /// <summary>Applies the current theme to the window, every control and all menus.</summary>
+    private void ApplyTheme()
+    {
+        var palette = ThemeManager.Current;
+        BackColor = palette.WindowBack;
+        titleHeader.ForeColor = palette.TextTitle;
+        versionLabel.ForeColor = palette.TextMuted;
+        timerLabel.ForeColor = palette.TextTitle;
+        modeFieldLabel.ForeColor = palette.TextMuted;
+        micFieldLabel.ForeColor = palette.TextMuted;
+        systemFieldLabel.ForeColor = palette.TextMuted;
+        outputFieldLabel.ForeColor = palette.TextMuted;
+        openLink.LinkColor = palette.LinkColor;
+        openLink.ActiveLinkColor = palette.LinkActiveColor;
+        openLink.VisitedLinkColor = palette.LinkColor;
+
+        modeSelector.ApplyTheme(palette);
+        micSelector.ApplyTheme(palette);
+        systemSelector.ApplyTheme(palette);
+        outputPathSelector.ApplyTheme(palette);
+        browseButton.ApplyTheme(palette);
+        recordButton.ApplyTheme(palette);
+        statusBadge.ApplyTheme(palette);
+        levelMeter.ApplyTheme(palette);
+        optionsButton.ApplyTheme(palette);
+
+        ThemeManager.ApplyToMenu(appMenu, palette);
+        ThemeManager.ApplyToMenu(modeMenu, palette);
+        ThemeManager.ApplyToMenu(microphoneMenu, palette);
+        ThemeManager.ApplyToMenu(systemAudioMenu, palette);
+        if (trayIcon?.ContextMenuStrip is { } trayMenu)
+        {
+            ThemeManager.ApplyToMenu(trayMenu, palette);
+        }
+
+        statusBadge.AccentColor = palette.StatusColor(lastStatusKind);
+        ThemeManager.ApplyTitleBarTheme(this);
+        Invalidate(true);
+    }
+
+    private void HandleThemeChanged()
+    {
+        if (InvokeRequired)
+        {
+            BeginInvoke(HandleThemeChanged);
+            return;
+        }
+
+        ApplyTheme();
     }
 
     private bool IsVisualRecording()
@@ -919,6 +995,7 @@ public sealed class MainForm : Form
         {
             Checked = isChecked,
             CheckOnClick = false,
+            ForeColor = ThemeManager.Current.MenuText,
         };
         item.Click += (_, _) => onClick();
         return item;
@@ -1096,7 +1173,8 @@ public sealed class MainForm : Form
             onOutputDirectoryChanged: ApplyOutputDirectorySelection,
             openAudioFiles: OpenAudioFolder,
             openLogFiles: OpenLogFiles,
-            openDiagnostics: ShowDiagnostics);
+            openDiagnostics: ShowDiagnostics,
+            persistThemePreferences: PersistThemePreferences);
         dialog.ShowDialog(this);
     }
 
@@ -1160,6 +1238,7 @@ public sealed class MainForm : Form
         var menu = new ContextMenuStrip();
         menu.Items.Add("Open", null, (_, _) => RestoreFromTray());
         menu.Items.Add("Exit", null, (_, _) => Close());
+        ThemeManager.ApplyToMenu(menu, ThemeManager.Current);
 
         var icon = new NotifyIcon
         {
@@ -1215,13 +1294,14 @@ public sealed class MainForm : Form
     private sealed class WindowControlButton : Control
     {
         private bool hovered;
+        private UiThemePalette palette = ThemeManager.Current;
 
         public WindowControlButton()
         {
             Size = new Size(22, 16);
             Cursor = Cursors.Hand;
             Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
-            ForeColor = Color.FromArgb(150, 158, 198);
+            ForeColor = palette.TextMuted;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
                 | ControlStyles.OptimizedDoubleBuffer
@@ -1229,6 +1309,13 @@ public sealed class MainForm : Form
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
             BackColor = Color.Transparent;
+        }
+
+        public void ApplyTheme(UiThemePalette value)
+        {
+            palette = value;
+            ForeColor = value.TextMuted;
+            Invalidate();
         }
 
         protected override void OnMouseEnter(EventArgs e)
@@ -1247,7 +1334,7 @@ public sealed class MainForm : Form
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            var color = hovered ? Color.FromArgb(178, 161, 255) : ForeColor;
+            var color = hovered ? palette.AccentSoftHover : ForeColor;
             const string caption = "\u2699"; // settings gear
             TextRenderer.DrawText(
                 e.Graphics,
@@ -1263,6 +1350,7 @@ public sealed class MainForm : Form
     {
         private readonly bool interactive;
         private bool hovered;
+        private UiThemePalette palette = ThemeManager.Current;
 
         public DarkSelector(bool interactive = true)
         {
@@ -1270,7 +1358,7 @@ public sealed class MainForm : Form
             Size = new Size(284, 26);
             Cursor = interactive ? Cursors.Hand : Cursors.Default;
             Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
-            ForeColor = Color.FromArgb(235, 238, 248);
+            ForeColor = palette.FieldText;
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
                 | ControlStyles.OptimizedDoubleBuffer
@@ -1279,6 +1367,13 @@ public sealed class MainForm : Form
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
             BackColor = Color.Transparent;
+        }
+
+        public void ApplyTheme(UiThemePalette value)
+        {
+            palette = value;
+            ForeColor = value.FieldText;
+            Invalidate();
         }
 
         protected override void OnMouseEnter(EventArgs e)
@@ -1312,15 +1407,15 @@ public sealed class MainForm : Form
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
             using var path = CreateRoundedRectangle(ClientRectangle, 8F);
-            using var fill = new SolidBrush(Enabled && hovered ? Color.FromArgb(31, 37, 68) : Color.FromArgb(24, 29, 56));
+            using var fill = new SolidBrush(Enabled && hovered ? palette.FieldBackHover : palette.FieldBack);
             using var border = new Pen(Enabled
-                ? (hovered ? Color.FromArgb(122, 99, 255) : Color.FromArgb(49, 57, 96))
-                : Color.FromArgb(38, 44, 74));
+                ? (hovered ? palette.FieldBorderHover : palette.FieldBorder)
+                : palette.FieldBorderDisabled);
 
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
 
-            var textColor = Enabled ? ForeColor : Color.FromArgb(105, 111, 146);
+            var textColor = Enabled ? ForeColor : palette.FieldTextDisabled;
             var textRect = new Rectangle(10, 0, Width - 34, Height);
             TextRenderer.DrawText(
                 e.Graphics,
@@ -1330,7 +1425,7 @@ public sealed class MainForm : Form
                 textColor,
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
 
-            var chevronColor = Enabled ? Color.FromArgb(150, 136, 255) : Color.FromArgb(90, 96, 128);
+            var chevronColor = Enabled ? palette.AccentSoft : palette.TextMutedDisabled;
             var chevronRect = new Rectangle(Width - 26, 0, 18, Height);
             if (interactive)
             {
@@ -1348,6 +1443,7 @@ public sealed class MainForm : Form
     private sealed class FolderBrowseButton : Control
     {
         private bool hovered;
+        private UiThemePalette palette = ThemeManager.Current;
 
         public FolderBrowseButton()
         {
@@ -1360,6 +1456,12 @@ public sealed class MainForm : Form
                 | ControlStyles.ResizeRedraw
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
+        }
+
+        public void ApplyTheme(UiThemePalette value)
+        {
+            palette = value;
+            Invalidate();
         }
 
         protected override void OnMouseEnter(EventArgs e)
@@ -1387,15 +1489,15 @@ public sealed class MainForm : Form
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
             using var path = CreateRoundedRectangle(ClientRectangle, 8F);
-            using var fill = new SolidBrush(Enabled && hovered ? Color.FromArgb(31, 37, 68) : Color.FromArgb(24, 29, 56));
+            using var fill = new SolidBrush(Enabled && hovered ? palette.FieldBackHover : palette.FieldBack);
             using var border = new Pen(Enabled
-                ? (hovered ? Color.FromArgb(122, 99, 255) : Color.FromArgb(49, 57, 96))
-                : Color.FromArgb(38, 44, 74));
+                ? (hovered ? palette.FieldBorderHover : palette.FieldBorder)
+                : palette.FieldBorderDisabled);
 
             e.Graphics.FillPath(fill, path);
             e.Graphics.DrawPath(border, path);
 
-            var color = Enabled ? Color.FromArgb(150, 158, 198) : Color.FromArgb(90, 96, 128);
+            var color = Enabled ? palette.TextMuted : palette.TextMutedDisabled;
             using var brush = new SolidBrush(color);
             // Simple folder glyph: back tab + body.
             e.Graphics.FillRectangle(brush, 10, 8, 8, 3);
@@ -1406,7 +1508,7 @@ public sealed class MainForm : Form
     private sealed class StatusBadgeControl : Control
     {
         private string caption = string.Empty;
-        private Color accentColor = Color.FromArgb(110, 230, 182);
+        private Color accentColor = ThemeManager.Current.StatusColor(StatusKind.Saved);
 
         public StatusBadgeControl()
         {
@@ -1419,6 +1521,13 @@ public sealed class MainForm : Form
                 | ControlStyles.UserPaint
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
+        }
+
+        public void ApplyTheme(UiThemePalette value)
+        {
+            // The accent color is semantic (status-driven); the owner re-sets it
+            // from the palette right after applying the theme.
+            Invalidate();
         }
 
         [Browsable(false)]
@@ -1469,6 +1578,7 @@ public sealed class MainForm : Form
         private float displayedLevel;
         private float phase;
         private float[]? previewLevels;
+        private UiThemePalette palette = ThemeManager.Current;
 
         public DotMeterControl()
         {
@@ -1479,6 +1589,12 @@ public sealed class MainForm : Form
                 | ControlStyles.UserPaint
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
+        }
+
+        public void ApplyTheme(UiThemePalette value)
+        {
+            palette = value;
+            Invalidate();
         }
 
         public void PushLevel(float rawLevel, bool active)
@@ -1527,7 +1643,7 @@ public sealed class MainForm : Form
 
                 var x = index * (dotSize + spacing);
                 var y = (Height - dotSize) / 2F;
-                var color = Blend(Color.FromArgb(66, 73, 109), Color.FromArgb(150, 136, 255), intensity);
+                var color = Blend(palette.MeterIdle, palette.AccentSoft, intensity);
 
                 using var brush = new SolidBrush(color);
                 e.Graphics.FillEllipse(brush, x, y, dotSize, dotSize);
@@ -1549,12 +1665,13 @@ public sealed class MainForm : Form
         private bool hovered;
         private bool pressed;
         private bool isRecording;
+        private UiThemePalette palette = ThemeManager.Current;
 
         public RecordActionButton()
         {
             Cursor = Cursors.Hand;
             Font = new Font("Segoe UI Semibold", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
-            ForeColor = Color.White;
+            ForeColor = palette.TextOnAccent;
             Size = new Size(368, 46);
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint
@@ -1562,6 +1679,13 @@ public sealed class MainForm : Form
                 | ControlStyles.UserPaint
                 | ControlStyles.SupportsTransparentBackColor,
                 true);
+        }
+
+        public void ApplyTheme(UiThemePalette value)
+        {
+            palette = value;
+            ForeColor = value.TextOnAccent;
+            Invalidate();
         }
 
         [Browsable(false)]
@@ -1613,8 +1737,8 @@ public sealed class MainForm : Form
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-            var start = isRecording ? Color.FromArgb(255, 98, 129) : Color.FromArgb(101, 77, 245);
-            var end = isRecording ? Color.FromArgb(255, 88, 119) : Color.FromArgb(81, 67, 242);
+            var start = isRecording ? palette.StopButtonStart : palette.Accent;
+            var end = isRecording ? palette.StopButtonEnd : palette.AccentEnd;
 
             if (hovered)
             {
@@ -1630,8 +1754,8 @@ public sealed class MainForm : Form
 
             if (!Enabled)
             {
-                start = Blend(start, Color.FromArgb(70, 75, 110), 0.45F);
-                end = Blend(end, Color.FromArgb(70, 75, 110), 0.45F);
+                start = Blend(start, palette.DisabledBlend, 0.45F);
+                end = Blend(end, palette.DisabledBlend, 0.45F);
             }
 
             using var path = CreateRoundedRectangle(ClientRectangle, 13F);

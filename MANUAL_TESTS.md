@@ -58,3 +58,22 @@ For each of the sources below (A-E), repeat the same checklist:
 - Canceling the Save As dialog never starts a recording.
 - Selector dropdowns stay anchored to their controls; version display reads
   the assembly version.
+
+## Appearance / themes
+
+- Options → Appearance: switch between System (Windows), Midnight, Graphite,
+  Light, Ocean, Teal, Ember and Rose; every surface (main window, options,
+  diagnostics, about, selector dropdowns, context menu) updates immediately —
+  no restart required.
+- Close persists the selection (settings.json: `Theme`,
+  `UseWindowsAccentColor`); Cancel, ESC or the title-bar close restores the
+  theme that was active when the dialog was opened.
+- Theme=System: Windows app mode Dark shows the neutral dark palette, Light
+  shows the light palette; switching the Windows app mode while ELARA runs
+  re-themes the open window and dialogs live; the native title bar follows
+  dark/light best-effort (Windows 10 20H1+ / Windows 11).
+- Use Windows accent color: replaces the theme accent (record button, links,
+  selector chevrons, hover borders, idle status, level meter hot end) with
+  the Windows accent color in every theme; unchecked keeps the theme accent.
+- Regression: changing devices/format/output folder must never reset the
+  theme (settings.json keeps `Theme` and `UseWindowsAccentColor`).

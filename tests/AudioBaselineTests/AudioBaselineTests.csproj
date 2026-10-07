@@ -12,6 +12,7 @@
     <Compile Include="../../OutputPathUtility.cs" Link="OutputPathUtility.cs" />
     <Compile Include="../../VersionText.cs" Link="VersionText.cs" />
     <Compile Include="../../AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="../../UiTheme.cs" Link="UiTheme.cs" />
     <Compile Include="../../AppPaths.cs" Link="AppPaths.cs" />
     <Compile Include="../../RecordingOutputProfile.cs" Link="RecordingOutputProfile.cs" />
     <Compile Include="../../CaptureEndpointSelection.cs" Link="CaptureEndpointSelection.cs" />
