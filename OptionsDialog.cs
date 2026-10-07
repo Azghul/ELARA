@@ -4,26 +4,20 @@ internal sealed class OptionsDialog : Form
 {
     private readonly string defaultOutputDirectory;
     private readonly Action<string?> onOutputDirectoryChanged;
-    private readonly Action<MicrophoneProcessingMode> onMicrophoneProcessingChanged;
     private readonly Action openAudioFiles;
     private readonly Action openLogFiles;
     private readonly TextBox outputPathBox;
-    private readonly RadioButton rawProcessingRadio;
-    private readonly RadioButton windowsNoiseSuppressionRadio;
     private readonly ToolTip toolTip = new() { ShowAlways = true };
 
     public OptionsDialog(
         string? customOutputDirectory,
         string defaultOutputDirectory,
-        MicrophoneProcessingMode processingMode,
         Action<string?> onOutputDirectoryChanged,
-        Action<MicrophoneProcessingMode> onMicrophoneProcessingChanged,
         Action openAudioFiles,
         Action openLogFiles)
     {
         this.defaultOutputDirectory = defaultOutputDirectory;
         this.onOutputDirectoryChanged = onOutputDirectoryChanged;
-        this.onMicrophoneProcessingChanged = onMicrophoneProcessingChanged;
         this.openAudioFiles = openAudioFiles;
         this.openLogFiles = openLogFiles;
 
@@ -34,7 +28,7 @@ internal sealed class OptionsDialog : Form
         MinimizeBox = false;
         ShowIcon = false;
         ShowInTaskbar = false;
-        ClientSize = new Size(460, 352);
+        ClientSize = new Size(460, 236);
         BackColor = Color.FromArgb(15, 19, 40);
         Font = new Font("Segoe UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
         var fieldColor = Color.FromArgb(235, 238, 248);
@@ -74,59 +68,22 @@ internal sealed class OptionsDialog : Form
         var resetButton = CreateDialogButton("Reset to Default", new Point(180, 110), 150);
         resetButton.Click += (_, _) => ResetToDefault();
 
-        var processingHeader = new Label
-        {
-            Text = "Microphone processing",
-            AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold, GraphicsUnit.Point),
-            ForeColor = Color.FromArgb(195, 201, 231),
-            Location = new Point(22, 154),
-        };
-
-        rawProcessingRadio = new RadioButton
-        {
-            Text = "Raw",
-            Checked = processingMode == MicrophoneProcessingMode.Raw,
-            ForeColor = fieldColor,
-            BackColor = Color.Transparent,
-            Location = new Point(22, 178),
-            Size = new Size(150, 24),
-        };
-        rawProcessingRadio.Click += (_, _) => SelectProcessingMode(MicrophoneProcessingMode.Raw);
-        toolTip.SetToolTip(
-            rawProcessingRadio,
-            "Captures the microphone with Windows adaptive audio processing bypassed where supported.");
-
-        windowsNoiseSuppressionRadio = new RadioButton
-        {
-            Text = "Windows noise suppression",
-            Checked = processingMode == MicrophoneProcessingMode.WindowsNoiseSuppression,
-            ForeColor = fieldColor,
-            BackColor = Color.Transparent,
-            Location = new Point(174, 178),
-            Size = new Size(264, 24),
-        };
-        windowsNoiseSuppressionRadio.Click += (_, _) => SelectProcessingMode(MicrophoneProcessingMode.WindowsNoiseSuppression);
-        toolTip.SetToolTip(
-            windowsNoiseSuppressionRadio,
-            "Uses Windows/device speech processing and requests available noise suppression.");
-
         var actionsHeader = new Label
         {
             Text = "Actions",
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 10F, FontStyle.Bold, GraphicsUnit.Point),
             ForeColor = Color.FromArgb(195, 201, 231),
-            Location = new Point(22, 216),
+            Location = new Point(22, 154),
         };
 
-        var openAudioButton = CreateDialogButton("Open Audio Files", new Point(22, 244), 150);
+        var openAudioButton = CreateDialogButton("Open Audio Files", new Point(22, 182), 150);
         openAudioButton.Click += (_, _) => openAudioFiles();
 
-        var openLogsButton = CreateDialogButton("Open Log Files", new Point(180, 244), 150);
+        var openLogsButton = CreateDialogButton("Open Log Files", new Point(180, 182), 150);
         openLogsButton.Click += (_, _) => openLogFiles();
 
-        var closeButton = CreateDialogButton("Close", new Point(338, 300), 100);
+        var closeButton = CreateDialogButton("Close", new Point(338, 184), 100);
         closeButton.BackColor = Color.FromArgb(101, 77, 245);
         closeButton.FlatAppearance.BorderSize = 0;
         closeButton.DialogResult = DialogResult.OK;
@@ -136,22 +93,12 @@ internal sealed class OptionsDialog : Form
         Controls.Add(outputPathBox);
         Controls.Add(chooseButton);
         Controls.Add(resetButton);
-        Controls.Add(processingHeader);
-        Controls.Add(rawProcessingRadio);
-        Controls.Add(windowsNoiseSuppressionRadio);
         Controls.Add(actionsHeader);
         Controls.Add(openAudioButton);
         Controls.Add(openLogsButton);
         Controls.Add(closeButton);
 
         AcceptButton = closeButton;
-    }
-
-    private void SelectProcessingMode(MicrophoneProcessingMode mode)
-    {
-        rawProcessingRadio.Checked = mode == MicrophoneProcessingMode.Raw;
-        windowsNoiseSuppressionRadio.Checked = mode == MicrophoneProcessingMode.WindowsNoiseSuppression;
-        onMicrophoneProcessingChanged(mode);
     }
 
     private string DisplayPath(string? customOutputDirectory)

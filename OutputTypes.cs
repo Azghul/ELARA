@@ -13,12 +13,6 @@ public enum OutputFormat
     Wav,
 }
 
-public enum MicrophoneProcessingMode
-{
-    Raw,
-    WindowsNoiseSuppression,
-}
-
 public static class OutputFormatExtensions
 {
     public static string ToFileExtension(this OutputFormat format)
@@ -38,19 +32,6 @@ public static class OutputFormatExtensions
             OutputFormat.Mp3 => "MP3",
             OutputFormat.Wav => "WAV",
             _ => format.ToString(),
-        };
-    }
-}
-
-public static class MicrophoneProcessingModeExtensions
-{
-    public static string ToDisplayName(this MicrophoneProcessingMode mode)
-    {
-        return mode switch
-        {
-            MicrophoneProcessingMode.Raw => "Raw",
-            MicrophoneProcessingMode.WindowsNoiseSuppression => "Windows noise suppression",
-            _ => mode.ToString(),
         };
     }
 }
@@ -76,4 +57,5 @@ public readonly record struct RecordingInfo(
     TimeSpan Duration,
     DateTime CreatedAt,
     bool WasRescuedToWav,
+    bool WasRescuedToMp3,
     bool HadCaptureStopErrors);

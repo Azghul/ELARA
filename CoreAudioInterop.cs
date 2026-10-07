@@ -165,17 +165,6 @@ internal struct AudioClientProperties
             Options = AudioClientStreamOptions.Raw,
         };
     }
-
-    public static AudioClientProperties CreateSpeech()
-    {
-        return new AudioClientProperties
-        {
-            Size = (uint)Marshal.SizeOf<AudioClientProperties>(),
-            IsOffload = false,
-            Category = AudioStreamCategory.Speech,
-            Options = AudioClientStreamOptions.None,
-        };
-    }
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -266,6 +255,18 @@ internal struct PropVariant
         return VariantType == VarEnum.VT_LPWSTR
             ? Marshal.PtrToStringUni(pointerValue)
             : null;
+    }
+
+    /// <summary>
+    /// Reads unsigned/signed 32-bit integer values (VT_UI4/VT_I4). The value
+    /// union of a native PROPVARIANT starts at offset 8, so the low 32 bits of
+    /// the padded pointer field carry the integer payload.
+    /// </summary>
+    public uint GetUInt32()
+    {
+        return VariantType is VarEnum.VT_UI4 or VarEnum.VT_I4
+            ? unchecked((uint)(ulong)pointerValue)
+            : 0;
     }
 }
 
@@ -427,6 +428,7 @@ internal interface IAudioEffectsManager
     [PreserveSig]
     int GetAudioEffects(out IntPtr effects, out uint effectCount);
 
-    [PreserveSig]
-    int SetAudioEffectState(ref Guid effectId, AudioEffectState state);
+    // NOTE: IAudioEffectsManager::SetAudioEffectState is deliberately NOT
+    // declared here. ELARA only discovers (read-only) which APO effects the
+    // current stream reports; it never changes an effect state.
 }

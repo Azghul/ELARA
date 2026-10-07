@@ -37,23 +37,38 @@ internal static class OutputPathUtility
     /// </summary>
     public static string ResolveRescueWavPath(string mp3Path)
     {
-        var directory = Path.GetDirectoryName(mp3Path);
+        return ResolveRescuePath(mp3Path, OutputFormat.Wav);
+    }
+
+    /// <summary>
+    /// Resolves the MP3 target used when WAV encoding fails (for example a
+    /// recording that exceeds the RIFF size limit) and the recording is rescued
+    /// as MP3. Never overwrites an existing MP3.
+    /// </summary>
+    public static string ResolveRescueMp3Path(string wavPath)
+    {
+        return ResolveRescuePath(wavPath, OutputFormat.Mp3);
+    }
+
+    private static string ResolveRescuePath(string sourcePath, OutputFormat format)
+    {
+        var directory = Path.GetDirectoryName(sourcePath);
         if (string.IsNullOrWhiteSpace(directory))
         {
             directory = ".";
         }
 
-        var baseName = Path.GetFileNameWithoutExtension(mp3Path);
+        var baseName = Path.GetFileNameWithoutExtension(sourcePath);
         if (string.IsNullOrWhiteSpace(baseName))
         {
             baseName = "recording";
         }
 
-        var candidate = Path.Combine(directory, baseName + OutputFormat.Wav.ToFileExtension());
+        var candidate = Path.Combine(directory, baseName + format.ToFileExtension());
         var suffix = 2;
         while (File.Exists(candidate))
         {
-            candidate = Path.Combine(directory, $"{baseName} ({suffix})" + OutputFormat.Wav.ToFileExtension());
+            candidate = Path.Combine(directory, $"{baseName} ({suffix})" + format.ToFileExtension());
             suffix++;
         }
 

@@ -1,5 +1,43 @@
 # Changelog
 
+# 1.1.0
+
+- Endpoint diagnostics (read-only, before recording starts): friendly name,
+  endpoint ID, device state, data flow, selection kind (explicit device or
+  Windows default multimedia role), transport when Windows reports it
+  reliably (e.g. USB), form factor, native/mix format with sample rate,
+  channel count, bits per sample, PCM/IEEE-float payload, WAVEFORMATEXTENSIBLE
+  sub-format and channel mask
+- Exact microphone endpoint handling: an explicit device selection is used
+  verbatim or fails with a clear error; a saved device that is missing at
+  startup is kept as the selection (shown as unavailable) instead of silently
+  falling back to the Windows default; endpoint identity is validated at
+  capture start (SelectedEndpointMatchesResolved) and a mismatch aborts the
+  recording
+- RAW capture baseline: the microphone stream always requests RAW Windows
+  stream options and falls back to the normal shared mode when rejected
+  (logged with WindowsProcessingMayBeActive=True); recording never aborts in
+  that case
+- Removed the active noise-suppression control: ELARA no longer requests the
+  speech capture category and no longer changes any audio effect state;
+  device effect discovery is strictly read-only
+- Read-only quality hints derived from the actual format: low-bandwidth
+  warnings for 8/16 kHz capture formats and a hint below 44.1 kHz, plus a
+  neutral telephony/hands-free endpoint classification; the transport alone is
+  never treated as a quality verdict
+- Unified capture pipeline: 48 kHz mono PCM16 temp files, at most one
+  WASAPI shared-mode conversion (AUTOCONVERTPCM + default-quality SRC),
+  exactly one MP3 encoding pass
+- MP3 output: mono, 48 kHz, 128 kbit/s CBR, defined once in a shared profile
+  (RecordingOutputProfile) used by the encoder, capture service, UI and tests
+- WAV output: PCM16, 48 kHz, mono, with a size guard that rescues to MP3
+  instead of writing a broken header
+- Long-session robustness: capture counters (data discontinuities, timestamp
+  errors, silent packets) are tracked and logged; the Both-mode mix uses the
+  one active source at unity when the other track carries no signal
+- Full diagnostics of selected/resolved endpoints and requested/initialized
+  capture formats are written to the session log
+
 # 1.0.1
 
 - Improved audio capture/mixing quality

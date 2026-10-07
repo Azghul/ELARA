@@ -9,4 +9,8 @@ internal static class AppLogger
     public static void Warn(string message)
     {
     }
+
+    public static void Error(string message, Exception? exception = null)
+    {
+    }
 }

@@ -18,27 +18,11 @@ internal sealed class AppSettings
     [JsonPropertyName("OutputFormat")]
     public string Format { get; set; } = nameof(OutputFormat.Mp3);
 
-    /// <summary>
-    /// Microphone stream processing preference. Raw keeps the Windows adaptive
-    /// audio processing bypassed where supported; WindowsNoiseSuppression requests
-    /// the speech capture category and available noise-suppression effects.
-    /// Settings files without this field resolve to Raw.
-    /// </summary>
-    [JsonPropertyName("MicrophoneProcessingMode")]
-    public string MicrophoneProcessing { get; set; } = nameof(MicrophoneProcessingMode.Raw);
-
     public OutputFormat ResolveOutputFormat()
     {
         return Enum.TryParse<OutputFormat>(Format, ignoreCase: true, out var format)
             ? format
             : OutputFormat.Mp3;
-    }
-
-    public MicrophoneProcessingMode ResolveMicrophoneProcessingMode()
-    {
-        return Enum.TryParse<MicrophoneProcessingMode>(MicrophoneProcessing, ignoreCase: true, out var mode)
-            ? mode
-            : MicrophoneProcessingMode.Raw;
     }
 
     public static AppSettings Load()

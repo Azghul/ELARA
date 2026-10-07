@@ -9,17 +9,19 @@ A lightweight Windows desktop recorder for microphone and system audio.
 - Recording modes: `Both` (system audio + microphone mono mix), `Mic`, `System`
 - Selectable microphone (Windows default + all capture devices)
 - Selectable playback device captured via WASAPI loopback (Windows default + all playback devices)
-- Output formats: MP3 (~160 kbit/s) and PCM WAV — chosen in the Save As dialog when a recording starts (a default timestamped file name is offered)
-- All output is 48 kHz mono; Both mixes system audio and microphone at fixed 50/50 headroom
-- Microphone capture requests Windows RAW processing by default and falls back to the normal default stream when RAW is unavailable
-- Optional Windows noise suppression: the microphone stream is categorized as speech and an available Windows noise-suppression effect is requested (never automatic gain or echo cancellation)
-- No automatic gain, loudness maximization or nonlinear saturation is applied
+- ELARA records the exact Windows microphone endpoint selected by the user and shows endpoint and format diagnostics to help identify low-bandwidth, telephony or hands-free capture profiles
+- Output formats: MP3 (mono, 48 kHz, 128 kbit/s CBR, single encode pass) and PCM WAV — chosen in the Save As dialog when a recording starts (a default timestamped file name is offered)
+- All output is 48 kHz mono; Both mixes system audio and microphone 50/50, and uses the one active source at unity when the other carries no signal at all
+- Pre-recording diagnostics panel: selected input device, used audio endpoint, endpoint state, data flow, transport (only when Windows reports it reliably, e.g. USB), form factor, sample rate, channel count, input bit depth/format (PCM vs IEEE float, incl. WAVEFORMATEXTENSIBLE sub-format and channel mask) and the actual output parameters; during a recording it shows the capture formats the audio clients really initialized
+- Read-only quality hints derived from the actual format (low-bandwidth 8/16 kHz warning) and a neutral telephony/hands-free classification; ELARA never switches, blocks or reconfigures anything
+- Microphone capture requests Windows RAW stream options and falls back to the normal shared mode when RAW is unavailable (logged with `WindowsProcessingMayBeActive=True`)
+- No automatic gain, loudness maximization, noise suppression, echo cancellation or nonlinear saturation is applied or requested by ELARA; device effect discovery is read-only
 - Visible mode and device selectors in the main window
 - Configurable recording location
 - System tray integration (hide to tray, restore, exit)
-- Application icon and version display (v1.0.1)
-- Persistent settings (devices, microphone processing, last used format, output location)
-- MP3-to-WAV rescue if MP3 encoding fails
+- Application icon and version display (v1.1.0)
+- Persistent settings (devices, last used format, output location)
+- MP3-to-WAV rescue if MP3 encoding fails, and WAV-to-MP3 rescue if a recording exceeds the WAV (RIFF) size limit
 - Raw PCM data is preserved in critical failure cases
 - Self-contained win-x64 release (no .NET installation required on the target PC)
 
@@ -37,7 +39,7 @@ Original copyright/license notices remain preserved.
 
 ## Status
 
-Version 1.0.1
+Version 1.1.0
 
 ## Third-party libraries
 
@@ -76,26 +78,32 @@ Your last selections are remembered across restarts:
 
 - selected microphone
 - selected playback (system audio) device
-- microphone processing mode (Raw / Windows noise suppression)
 - last used output format (used to preselect the Save As filter)
 - recording output location
 
 Settings are stored as JSON in the per-user app data folder
 (`%LOCALAPPDATA%\ELARA\settings.json`). Settings from ELARA 0.8.0 are migrated
-automatically on first start; the legacy file is never deleted.
+automatically on first start; the legacy file is never deleted. ELARA no longer
+configures any microphone processing: the microphone stream always requests RAW
+Windows stream options with a safe shared-mode fallback, and device effect
+discovery is read-only.
 
 New recordings are saved to `Documents\ELARA` by default. Recordings made with
 ELARA 0.8.0 in the old default folder (`Documents\Simple Audio Recorder`) are not
 moved and remain untouched.
 
 If a saved device or output folder no longer exists at startup, the app falls back
-to the Windows default location and logs a warning. If a device selected in the UI
-disappears before you start a recording, the recording is **not** started and an
-error is shown instead of silently switching devices.
+to the Windows default **output location** and logs a warning. A saved audio device
+that is missing at startup is kept as the selection (shown as "unavailable") and a
+recording is **not** started until the device returns or another device is chosen —
+ELARA never silently records a different device than the one you selected. If a
+device selected in the UI disappears before you start a recording, the recording is
+also not started and an error is shown instead of silently switching devices.
 
 ## Data safety
 
 - Temporary raw PCM files are only deleted after the final MP3/WAV file was written successfully.
 - If MP3 encoding fails, the recording is automatically saved as WAV and the UI tells you so.
+- If WAV encoding fails (for example a multi-hour recording exceeding the WAV/RIFF size limit), the recording is automatically saved as MP3 and the UI tells you so.
 - If saving fails completely, the raw audio is kept and its path is shown in the error message and written to the log.
-- In Both mode a single silent track (for example no system audio playing) is saved as silence.
+- In Both mode a single silent track is no longer halved: the source that carries signal is used at unity, a fully silent session is saved as silence.
