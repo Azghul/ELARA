@@ -2,17 +2,8 @@ namespace ELARA;
 
 internal static class WavUtility
 {
-    internal static readonly GainProfile SystemGainProfile = new(
-        TargetPeakLevel: 0.92F,
-        TargetActiveRms: 0.18F,
-        MaximumGain: 3.0F,
-        ActivityThreshold: 0.015F);
-
-    internal static readonly GainProfile MicrophoneGainProfile = new(
-        TargetPeakLevel: 0.96F,
-        TargetActiveRms: 0.24F,
-        MaximumGain: 8.0F,
-        ActivityThreshold: 0.008F);
+    /// <summary>Largest PCM data length representable in a standard RIFF/WAV header.</summary>
+    private const long MaximumWavDataLengthBytes = int.MaxValue - 8;
 
     public static void WriteMonoWavFromPcm(
         string pcmPath,
@@ -21,130 +12,129 @@ internal static class WavUtility
         short bitsPerSample,
         bool isMicrophoneTrack = false)
     {
-        var gainProfile = isMicrophoneTrack ? MicrophoneGainProfile : SystemGainProfile;
-        var analysis = AnalyzePcm(pcmPath, gainProfile);
-        var gain = CalculateGain(analysis, gainProfile);
         using var input = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
+        var dataLength = input.BaseStream.Length;
+        if (dataLength > MaximumWavDataLengthBytes)
+        {
+            // Never overflow the RIFF header for multi-hour recordings; the caller
+            // rescues the recording as MP3 instead of writing a broken WAV.
+            throw new InvalidOperationException(
+                $"The recording is too long for the WAV (RIFF) format ({dataLength} bytes of PCM data). Use the MP3 output format for such long sessions.");
+        }
+
         using var output = new FileStream(wavPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var writer = new BinaryWriter(output);
 
-        var inputLength = input.BaseStream.Length;
-        WriteWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, inputLength);
+        WriteWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
 
         while (input.BaseStream.Position < input.BaseStream.Length)
         {
-            writer.Write(ApplyGain(input.ReadInt16(), gain));
+            writer.Write(input.ReadInt16());
         }
 
-        FinalizeWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, inputLength);
+        FinalizeWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
         AppLogger.Info(
-            $"Mono WAV written. File={wavPath}; Track={(isMicrophoneTrack ? "Microphone" : "System")}; Gain={gain:0.00}x; Peak={analysis.PeakNormalized:0.000}; ActiveRms={analysis.ActiveRmsNormalized:0.000}; ActiveSamples={analysis.ActiveSampleCount}");
+            $"Mono WAV written without gain or loudness processing. File={wavPath}; Track={(isMicrophoneTrack ? "Microphone" : "System")}");
     }
 
-    public static void WriteStereoWavFromMonoPcm(
-        string leftPcmPath,
-        string rightPcmPath,
+    public static void WriteMonoMixWavFromMonoPcm(
+        string systemPcmPath,
+        string microphonePcmPath,
         string wavPath,
         int sampleRate,
-        short bitsPerSample)
+        short bitsPerSample,
+        long? systemFirstQpcPosition,
+        long? microphoneFirstQpcPosition)
     {
-        var leftAnalysis = AnalyzePcm(leftPcmPath, SystemGainProfile);
-        var rightAnalysis = AnalyzePcm(rightPcmPath, MicrophoneGainProfile);
-        var leftGain = CalculateGain(leftAnalysis, SystemGainProfile);
-        var rightGain = CalculateGain(rightAnalysis, MicrophoneGainProfile);
+        var systemHasSignal = PcmFileHasSignal(systemPcmPath);
+        var microphoneHasSignal = PcmFileHasSignal(microphonePcmPath);
+        var (systemGain, microphoneGain) = BothMixProfile.SelectMixGains(systemHasSignal, microphoneHasSignal);
 
-        using var left = new BinaryReader(new FileStream(leftPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        using var right = new BinaryReader(new FileStream(rightPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
+        using var system = new BinaryReader(new FileStream(systemPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
+        using var microphone = new BinaryReader(new FileStream(microphonePcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
         using var output = new FileStream(wavPath, FileMode.Create, FileAccess.Write, FileShare.None);
         using var writer = new BinaryWriter(output);
 
-        var leftFrames = left.BaseStream.Length / 2;
-        var rightFrames = right.BaseStream.Length / 2;
-        var totalFrames = Math.Max(leftFrames, rightFrames);
-        var dataLength = totalFrames * 4;
+        var systemFrames = system.BaseStream.Length / 2;
+        var microphoneFrames = microphone.BaseStream.Length / 2;
+        var (systemStartOffset, microphoneStartOffset) = CalculateStartOffsets(
+            systemFirstQpcPosition,
+            microphoneFirstQpcPosition,
+            sampleRate);
+        var totalFrames = Math.Max(systemStartOffset + systemFrames, microphoneStartOffset + microphoneFrames);
+        var dataLength = totalFrames * 2;
+        if (dataLength > MaximumWavDataLengthBytes)
+        {
+            throw new InvalidOperationException(
+                $"The recording is too long for the WAV (RIFF) format ({dataLength} bytes of PCM data). Use the MP3 output format for such long sessions.");
+        }
 
-        WriteWaveHeader(writer, channels: 2, sampleRate, bitsPerSample, dataLength);
+        WriteWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
 
         for (long index = 0; index < totalFrames; index++)
         {
-            var leftSample = index < leftFrames ? ApplyGain(left.ReadInt16(), leftGain) : (short)0;
-            var rightSample = index < rightFrames ? ApplyGain(right.ReadInt16(), rightGain) : (short)0;
-            writer.Write(leftSample);
-            writer.Write(rightSample);
+            var systemIndex = index - systemStartOffset;
+            var microphoneIndex = index - microphoneStartOffset;
+            var systemSample = systemIndex >= 0 && systemIndex < systemFrames ? system.ReadInt16() : (short)0;
+            var microphoneSample = microphoneIndex >= 0 && microphoneIndex < microphoneFrames ? microphone.ReadInt16() : (short)0;
+            writer.Write(BothMixProfile.MixFrame(systemSample, microphoneSample, systemGain, microphoneGain));
         }
 
-        FinalizeWaveHeader(writer, channels: 2, sampleRate, bitsPerSample, dataLength);
+        FinalizeWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
         AppLogger.Info(
-            $"Stereo WAV written. File={wavPath}; LeftGain={leftGain:0.00}x; RightGain={rightGain:0.00}x; LeftPeak={leftAnalysis.PeakNormalized:0.000}; RightPeak={rightAnalysis.PeakNormalized:0.000}; LeftActiveRms={leftAnalysis.ActiveRmsNormalized:0.000}; RightActiveRms={rightAnalysis.ActiveRmsNormalized:0.000}");
+            $"Mono-mix WAV written without gain or loudness processing. File={wavPath}; Mix={BothMixProfile.DescribeMixMode(systemHasSignal, microphoneHasSignal)}; SystemStartOffsetFrames={systemStartOffset}; MicrophoneStartOffsetFrames={microphoneStartOffset}");
     }
 
-    internal static PcmAnalysis AnalyzePcm(string pcmPath, GainProfile gainProfile)
+    /// <summary>
+    /// Streaming signal check for a raw PCM16 file: true when it contains at
+    /// least one non-zero sample. Reads sequentially, so multi-hour temp files
+    /// never need to be buffered in memory.
+    /// </summary>
+    internal static bool PcmFileHasSignal(string path)
     {
-        using var reader = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-
-        short peak = 0;
-        double activeSumSquares = 0D;
-        long activeSampleCount = 0;
-        var threshold = (short)Math.Clamp(
-            MathF.Round(short.MaxValue * gainProfile.ActivityThreshold),
-            1F,
-            short.MaxValue);
-
-        while (reader.BaseStream.Position < reader.BaseStream.Length)
+        if (!File.Exists(path))
         {
-            var sample = reader.ReadInt16();
-            var amplitude = sample == short.MinValue ? short.MaxValue : (short)Math.Abs(sample);
-            if (amplitude > peak)
-            {
-                peak = amplitude;
-            }
+            return false;
+        }
 
-            if (amplitude >= threshold)
+        using var input = new BinaryReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read));
+        while (input.BaseStream.Position + 1 < input.BaseStream.Length)
+        {
+            if (input.ReadInt16() != 0)
             {
-                var normalized = sample / (double)short.MaxValue;
-                activeSumSquares += normalized * normalized;
-                activeSampleCount++;
+                return true;
             }
         }
 
-        var peakNormalized = peak / (float)short.MaxValue;
-        var activeRmsNormalized = activeSampleCount > 0
-            ? (float)Math.Sqrt(activeSumSquares / activeSampleCount)
-            : 0F;
-
-        return new PcmAnalysis(peakNormalized, activeRmsNormalized, activeSampleCount);
+        return false;
     }
 
-    internal static float CalculateGain(PcmAnalysis analysis, GainProfile gainProfile)
+    internal static (long SystemFrames, long MicrophoneFrames) CalculateStartOffsets(
+        long? systemFirstQpcPosition,
+        long? microphoneFirstQpcPosition,
+        int sampleRate)
     {
-        if (analysis.PeakNormalized <= 0F)
+        if (systemFirstQpcPosition is null || microphoneFirstQpcPosition is null)
         {
-            return 1F;
+            AppLogger.Warn("Capture start timestamps were unavailable; mono-mix tracks will start without timestamp correction.");
+            return (0, 0);
         }
 
-        var peakGain = gainProfile.TargetPeakLevel / analysis.PeakNormalized;
-        var rmsGain = analysis.ActiveRmsNormalized > 0F
-            ? gainProfile.TargetActiveRms / analysis.ActiveRmsNormalized
-            : peakGain;
+        // WASAPI reports QPC packet timestamps in 100-nanosecond units.
+        var delta100Nanoseconds = systemFirstQpcPosition.Value - microphoneFirstQpcPosition.Value;
+        var deltaFrames = (long)Math.Round(
+            delta100Nanoseconds * (double)sampleRate / 10_000_000D,
+            MidpointRounding.AwayFromZero);
 
-        var desiredGain = Math.Max(peakGain, rmsGain);
-        return Math.Clamp(desiredGain, 1F, gainProfile.MaximumGain);
+        return deltaFrames >= 0
+            ? (deltaFrames, 0)
+            : (0, -deltaFrames);
     }
 
-    internal static short ApplyGain(short sample, float gain)
+    internal static short MixToMono(short systemSample, short microphoneSample)
     {
-        if (gain <= 1.001F)
-        {
-            return sample;
-        }
-
-        var normalized = sample / (float)short.MaxValue;
-        var boosted = normalized * gain;
-
-        // Gentle saturation keeps boosted mic tracks from sounding harsh when they hit the new gain ceiling.
-        var shaped = MathF.Tanh(boosted) / MathF.Tanh(1.4F);
-        var scaled = Math.Clamp(shaped, -1F, 1F) * short.MaxValue;
-        return (short)Math.Clamp(MathF.Round(scaled), short.MinValue, short.MaxValue);
+        var sum = (int)systemSample + microphoneSample;
+        return (short)Math.Round(sum / 2D, MidpointRounding.AwayFromZero);
     }
 
     private static void WriteWaveHeader(
@@ -190,14 +180,4 @@ internal static class WavUtility
         writer.Flush();
     }
 
-    internal readonly record struct GainProfile(
-        float TargetPeakLevel,
-        float TargetActiveRms,
-        float MaximumGain,
-        float ActivityThreshold);
-
-    internal readonly record struct PcmAnalysis(
-        float PeakNormalized,
-        float ActiveRmsNormalized,
-        long ActiveSampleCount);
 }

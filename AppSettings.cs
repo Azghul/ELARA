@@ -15,6 +15,18 @@ internal sealed class AppSettings
 
     public bool AcceptedDotNetLibraryLicense { get; set; }
 
+    /// <summary>
+    /// Last saved window bounds (null = default placement). Restored only when
+    /// the saved rectangle still lies on a visible screen.
+    /// </summary>
+    public int? WindowLeft { get; set; }
+
+    public int? WindowTop { get; set; }
+
+    public int? WindowWidth { get; set; }
+
+    public int? WindowHeight { get; set; }
+
     [JsonPropertyName("OutputFormat")]
     public string Format { get; set; } = nameof(OutputFormat.Mp3);
 

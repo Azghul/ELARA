@@ -3,69 +3,14 @@ using System.Threading;
 
 namespace ELARA;
 
-public enum CaptureMode
-{
-    Both,
-    Microphone,
-    System,
-}
-
-public enum OutputFormat
-{
-    Mp3,
-    Wav,
-}
-
-public static class OutputFormatExtensions
-{
-    public static string ToFileExtension(this OutputFormat format)
-    {
-        return format switch
-        {
-            OutputFormat.Mp3 => ".mp3",
-            OutputFormat.Wav => ".wav",
-            _ => "." + format.ToString().ToLowerInvariant(),
-        };
-    }
-
-    public static string ToDisplayName(this OutputFormat format)
-    {
-        return format switch
-        {
-            OutputFormat.Mp3 => "MP3",
-            OutputFormat.Wav => "WAV",
-            _ => format.ToString(),
-        };
-    }
-}
-
-public readonly record struct RecordingInfo(
-    string FilePath,
-    OutputFormat Format,
-    CaptureMode Mode,
-    TimeSpan Duration,
-    DateTime CreatedAt,
-    bool WasRescuedToWav,
-    bool HadCaptureStopErrors);
-
-public static class CaptureModeExtensions
-{
-    public static string ToDisplayName(this CaptureMode mode)
-    {
-        return mode switch
-        {
-            CaptureMode.Both => "Both",
-            CaptureMode.Microphone => "Mic",
-            CaptureMode.System => "System",
-            _ => mode.ToString(),
-        };
-    }
-}
-
 public sealed class AudioCaptureService : IDisposable
 {
-    private const int TargetSampleRate = 48_000;
-    private const short TargetOutputBitsPerSample = 16;
+    // Output/capture targets come from the shared recording profile so the
+    // encoder, the UI diagnostics and the capture pipeline can never disagree.
+    private const int TargetSampleRate = RecordingOutputProfile.SampleRate;
+    private const short TargetOutputBitsPerSample = RecordingOutputProfile.BitsPerSample;
+
+    /// <summary>32-bit float is requested first; capture falls back to 16-bit PCM if rejected.</summary>
     private const short TargetCaptureBitsPerSample = 32;
     private const short MicrophoneRequestedChannels = 1;
     private const short SystemRequestedChannels = 2;
@@ -77,6 +22,7 @@ public sealed class AudioCaptureService : IDisposable
 
     private WasapiCaptureSource? microphoneSource;
     private WasapiCaptureSource? systemSource;
+    private CaptureSessionCoordinator? captureCoordinator;
     private string? tempDirectory;
     private string? tempMicrophonePath;
     private string? tempSystemPath;
@@ -124,6 +70,19 @@ public sealed class AudioCaptureService : IDisposable
 
     public string? ActiveSystemDeviceId { get; private set; }
 
+    /// <summary>The capture format the microphone audio client actually initialized.</summary>
+    public CapturedStreamFormat? ActiveMicrophoneFormat { get; private set; }
+
+    /// <summary>The capture format the system audio client actually initialized.</summary>
+    public CapturedStreamFormat? ActiveSystemFormat { get; private set; }
+
+    /// <summary>
+    /// True when RAW stream options were accepted for the microphone capture,
+    /// false when capture fell back to the default shared mode, null when no
+    /// microphone capture is part of the session.
+    /// </summary>
+    public bool? ActiveMicrophoneRawActivated { get; private set; }
+
     public float ConsumePeak()
     {
         return Interlocked.Exchange(ref peakMilli, 0) / 1000F;
@@ -133,12 +92,13 @@ public sealed class AudioCaptureService : IDisposable
         CaptureMode mode,
         string? microphoneDeviceId = null,
         string? playbackDeviceId = null,
-        OutputFormat format = OutputFormat.Wav)
+        OutputFormat format = OutputFormat.Wav,
+        string? selectedOutputPath = null)
     {
         await transitionLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            StartCore(mode, microphoneDeviceId, playbackDeviceId, format);
+            StartCore(mode, microphoneDeviceId, playbackDeviceId, format, selectedOutputPath);
         }
         finally
         {
@@ -175,7 +135,12 @@ public sealed class AudioCaptureService : IDisposable
         transitionLock.Dispose();
     }
 
-    private void StartCore(CaptureMode mode, string? microphoneDeviceId, string? playbackDeviceId, OutputFormat format)
+    private void StartCore(
+        CaptureMode mode,
+        string? microphoneDeviceId,
+        string? playbackDeviceId,
+        OutputFormat format,
+        string? selectedOutputPath)
     {
         if (IsRecording)
         {
@@ -190,21 +155,37 @@ public sealed class AudioCaptureService : IDisposable
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
         ActiveSystemDeviceName = null;
+        ActiveMicrophoneFormat = null;
+        ActiveSystemFormat = null;
+        ActiveMicrophoneRawActivated = null;
         tempDirectory = Path.Combine(Path.GetTempPath(), "ELARA", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDirectory);
 
         tempMicrophonePath = Path.Combine(tempDirectory, "microphone.pcm");
         tempSystemPath = Path.Combine(tempDirectory, "system.pcm");
-        var recordingBaseName = GetUniqueRecordingBaseName(
-            OutputDirectory,
-            $"{DateTime.Now:yyyy-MM-dd HH-mm-ss} {mode.ToDisplayName().ToLowerInvariant()}");
-        outputFilePath = Path.Combine(OutputDirectory, recordingBaseName + format.ToFileExtension());
+
+        // The Save As dialog always provides the final target path. The fallback
+        // auto-name only protects callers that do not pass an explicit path.
+        if (string.IsNullOrWhiteSpace(selectedOutputPath))
+        {
+            var recordingBaseName = GetUniqueRecordingBaseName(
+                OutputDirectory,
+                $"{DateTime.Now:yyyy-MM-dd HH-mm-ss} {mode.ToDisplayName().ToLowerInvariant()}");
+            outputFilePath = Path.Combine(OutputDirectory, recordingBaseName + format.ToFileExtension());
+        }
+        else
+        {
+            outputFilePath = OutputPathUtility.EnsureExtensionMatches(selectedOutputPath, format);
+        }
 
         AppLogger.Info(
-            $"Starting recording. Mode={mode}; RequestedFormat={format.ToDisplayName()}; RequestedMicrophoneId={(microphoneDeviceId ?? "<default>")}; RequestedPlaybackId={(playbackDeviceId ?? "<default>")}; OutputFile={outputFilePath}; TempDirectory={tempDirectory}");
+            $"Starting recording. Mode={mode}; RequestedFormat={format.ToDisplayName()}; SelectedMicrophoneDeviceId={(microphoneDeviceId ?? "<default>")}; SelectedPlaybackDeviceId={(playbackDeviceId ?? "<default>")}; OutputFile={outputFilePath}; TempDirectory={tempDirectory}");
 
         try
         {
+            var sourceCount = mode == CaptureMode.Both ? 2 : 1;
+            captureCoordinator = new CaptureSessionCoordinator(sourceCount);
+
             if (mode is CaptureMode.Both or CaptureMode.Microphone)
             {
                 microphoneSource = new WasapiCaptureSource(
@@ -215,10 +196,9 @@ public sealed class AudioCaptureService : IDisposable
                     TargetSampleRate,
                     TargetCaptureBitsPerSample,
                     MicrophoneRequestedChannels,
-                    ReportPeak);
-                microphoneSource.Start();
-                ActiveMicrophoneDeviceId = microphoneSource.ResolvedDeviceId;
-                ActiveMicrophoneDeviceName = microphoneSource.ResolvedDeviceName;
+                    ReportPeak,
+                    captureCoordinator);
+                microphoneSource.Prepare();
             }
 
             if (mode is CaptureMode.Both or CaptureMode.System)
@@ -231,24 +211,72 @@ public sealed class AudioCaptureService : IDisposable
                     TargetSampleRate,
                     TargetCaptureBitsPerSample,
                     SystemRequestedChannels,
-                    ReportPeak);
-                systemSource.Start();
+                    ReportPeak,
+                    captureCoordinator);
+                systemSource.Prepare();
+            }
+
+            if (!captureCoordinator.WaitUntilPrepared(TimeSpan.FromSeconds(8)))
+            {
+                throw new TimeoutException("Timed out while preparing the capture sources.");
+            }
+
+            microphoneSource?.EnsurePrepared();
+            systemSource?.EnsurePrepared();
+
+            AppLogger.Info("All capture sources prepared; releasing the shared start barrier.");
+            captureCoordinator.ReleaseStart();
+            microphoneSource?.WaitUntilStarted();
+            systemSource?.WaitUntilStarted();
+
+            if (microphoneSource is not null)
+            {
+                ActiveMicrophoneDeviceId = microphoneSource.ResolvedDeviceId;
+                ActiveMicrophoneDeviceName = microphoneSource.ResolvedDeviceName;
+                ActiveMicrophoneFormat = microphoneSource.ResolvedFormat;
+                ActiveMicrophoneRawActivated = microphoneSource.RawActivated;
+            }
+
+            if (systemSource is not null)
+            {
                 ActiveSystemDeviceId = systemSource.ResolvedDeviceId;
                 ActiveSystemDeviceName = systemSource.ResolvedDeviceName;
+                ActiveSystemFormat = systemSource.ResolvedFormat;
             }
+
+            // Belt-and-braces validation: the resolved endpoints must exactly match the
+            // user's selections. The capture workers already abort on a mismatch; this
+            // check makes any deviation impossible to miss at the session level.
+            if (microphoneSource is not null
+                && !string.IsNullOrWhiteSpace(microphoneDeviceId)
+                && !string.Equals(ActiveMicrophoneDeviceId, microphoneDeviceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(CaptureEndpointText.EndpointMismatchMessage(EDataFlow.Capture));
+            }
+
+            if (systemSource is not null
+                && !string.IsNullOrWhiteSpace(playbackDeviceId)
+                && !string.Equals(ActiveSystemDeviceId, playbackDeviceId, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(CaptureEndpointText.EndpointMismatchMessage(EDataFlow.Render));
+            }
+
+            var microphoneEndpointMatches = microphoneSource is null
+                ? (bool?)null
+                : string.Equals(ActiveMicrophoneDeviceId, microphoneDeviceId, StringComparison.Ordinal);
+            var systemEndpointMatches = systemSource is null
+                ? (bool?)null
+                : string.Equals(ActiveSystemDeviceId, playbackDeviceId, StringComparison.Ordinal);
 
             Interlocked.Exchange(ref peakMilli, 0);
             stopwatch.Restart();
             IsRecording = true;
             AppLogger.Info(
-                $"Recording active. Mode={currentMode}; Format={format.ToDisplayName()}; Microphone={(ActiveMicrophoneDeviceName ?? "<not used>")} [{(ActiveMicrophoneDeviceId ?? "<n/a>")}]; SystemAudio={(ActiveSystemDeviceName ?? "<not used>")} [{(ActiveSystemDeviceId ?? "<n/a>")}]");
+                $"Recording active. Mode={currentMode}; Format={format.ToDisplayName()}; SelectedMicrophoneDeviceId={(microphoneDeviceId ?? "<default>")}; ResolvedMicrophoneDeviceId={(ActiveMicrophoneDeviceId ?? "<n/a>")}; SelectedEndpointMatchesResolved={(microphoneEndpointMatches?.ToString() ?? "<n/a>")}; SelectedSystemDeviceId={(playbackDeviceId ?? "<default>")}; ResolvedSystemDeviceId={(ActiveSystemDeviceId ?? "<n/a>")}; SelectedSystemEndpointMatchesResolved={(systemEndpointMatches?.ToString() ?? "<n/a>")}; NativeMicrophoneMixFormat={microphoneSource?.NativeMixFormatDescription ?? "<n/a>"}; RequestedMicrophoneCaptureFormat={microphoneSource?.RequestedCaptureFormat?.Description ?? "<n/a>"}; InitializedMicrophoneCaptureFormat={ActiveMicrophoneFormat?.Description ?? "<n/a>"}; RawRequested={(microphoneSource is not null)}; RawActivated={ActiveMicrophoneRawActivated?.ToString() ?? "<n/a>"}; SystemAudio={(ActiveSystemDeviceName ?? "<not used>")} [{(ActiveSystemDeviceId ?? "<n/a>")}]; SystemCaptureFormat={ActiveSystemFormat?.Description ?? "<n/a>"}");
 
-            if (ActiveMicrophoneDeviceName is { } microphoneName
-                && microphoneName.Contains("Chat", StringComparison.OrdinalIgnoreCase))
-            {
-                AppLogger.Warn(
-                    $"The selected microphone endpoint '{microphoneName}' appears to be a chat/communications profile. That device profile can limit microphone fidelity independently of the app.");
-            }
+            LogEndpointQualityClassification(
+                ActiveMicrophoneDeviceName,
+                ActiveMicrophoneFormat);
         }
         catch (Exception ex)
         {
@@ -304,10 +332,19 @@ public sealed class AudioCaptureService : IDisposable
 
         microphoneSource = null;
         systemSource = null;
+        if (!anyWorkerMayStillRun)
+        {
+            captureCoordinator?.Dispose();
+        }
+
+        captureCoordinator = null;
         ActiveMicrophoneDeviceId = null;
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
         ActiveSystemDeviceName = null;
+        ActiveMicrophoneFormat = null;
+        ActiveSystemFormat = null;
+        ActiveMicrophoneRawActivated = null;
 
         // Raw-data safety: keep the temporary directory if any PCM data exists OR if a
         // worker may still be running (it could still write PCM data).
@@ -334,10 +371,13 @@ public sealed class AudioCaptureService : IDisposable
             throw new InvalidOperationException("There is no active recording to stop.");
         }
 
-        // PHASE 1: stop every active capture source independently so that a failure on
-        // one source never prevents the other source from being stopped and flushed.
+        // PHASE 1: signal every active capture source together, then join each worker
+        // independently so that a failure on one never prevents the other from flushing.
         var stopErrors = new List<Exception>();
         var timedOut = false;
+
+        // Both workers observe the same stop edge and drain concurrently before they join.
+        captureCoordinator?.RequestStop();
 
         if (microphoneSource is not null)
         {
@@ -435,11 +475,18 @@ public sealed class AudioCaptureService : IDisposable
     private RecordingInfo SaveRecording(List<Exception> stopErrors)
     {
         var requestedFormat = currentFormat;
+        var outputDirectory = Path.GetDirectoryName(outputFilePath);
+        if (string.IsNullOrWhiteSpace(outputDirectory))
+        {
+            outputDirectory = OutputDirectory;
+        }
+
         var baseName = Path.GetFileNameWithoutExtension(outputFilePath)
             ?? throw new InvalidOperationException("The output file path was not initialized.");
-        var mp3Path = Path.Combine(OutputDirectory, baseName + ".mp3");
-        var wavPath = Path.Combine(OutputDirectory, baseName + ".wav");
+        var mp3Path = Path.Combine(outputDirectory, baseName + OutputFormat.Mp3.ToFileExtension());
+        var wavPath = Path.Combine(outputDirectory, baseName + OutputFormat.Wav.ToFileExtension());
         var rescuedToWav = false;
+        var rescuedToMp3 = false;
         string finalPath;
 
         try
@@ -457,17 +504,36 @@ public sealed class AudioCaptureService : IDisposable
                     // Data safety first: rescue the raw recording as WAV instead of losing it.
                     AppLogger.Error("MP3 encoding failed. Attempting to rescue the recording as WAV.", mp3Error);
                     TryDeleteFile(mp3Path);
-                    EncodeOutput(OutputFormat.Wav, wavPath);
-                    ValidateOutputFile(wavPath, OutputFormat.Wav);
+                    // The user chose "meeting.mp3"; never overwrite an existing meeting.wav.
+                    var rescueWavPath = OutputPathUtility.ResolveRescueWavPath(mp3Path);
+                    EncodeOutput(OutputFormat.Wav, rescueWavPath);
+                    ValidateOutputFile(rescueWavPath, OutputFormat.Wav);
                     rescuedToWav = true;
-                    finalPath = wavPath;
+                    finalPath = rescueWavPath;
                 }
             }
             else
             {
-                EncodeOutput(OutputFormat.Wav, wavPath);
-                ValidateOutputFile(wavPath, OutputFormat.Wav);
-                finalPath = wavPath;
+                try
+                {
+                    EncodeOutput(OutputFormat.Wav, wavPath);
+                    ValidateOutputFile(wavPath, OutputFormat.Wav);
+                    finalPath = wavPath;
+                }
+                catch (Exception wavError)
+                {
+                    // Data safety first: rescue the raw recording as MP3 instead of losing
+                    // it (for example when a very long recording exceeds the WAV/RIFF
+                    // size limit).
+                    AppLogger.Error("WAV encoding failed. Attempting to rescue the recording as MP3.", wavError);
+                    TryDeleteFile(wavPath);
+                    // The user chose "meeting.wav"; never overwrite an existing meeting.mp3.
+                    var rescueMp3Path = OutputPathUtility.ResolveRescueMp3Path(wavPath);
+                    EncodeOutput(OutputFormat.Mp3, rescueMp3Path);
+                    ValidateOutputFile(rescueMp3Path, OutputFormat.Mp3);
+                    rescuedToMp3 = true;
+                    finalPath = rescueMp3Path;
+                }
             }
         }
         catch (Exception saveError)
@@ -484,21 +550,51 @@ public sealed class AudioCaptureService : IDisposable
 
         var recordingInfo = new RecordingInfo(
             finalPath,
-            rescuedToWav ? OutputFormat.Wav : requestedFormat,
+            rescuedToWav ? OutputFormat.Wav : rescuedToMp3 ? OutputFormat.Mp3 : requestedFormat,
             currentMode,
             stopwatch.Elapsed,
             DateTime.Now,
             rescuedToWav,
+            rescuedToMp3,
             stopErrors.Count > 0);
 
         AppLogger.Info(
-            $"Recording saved. File={recordingInfo.FilePath}; Format={recordingInfo.Format.ToDisplayName()}; Requested={requestedFormat.ToDisplayName()}; RescuedToWav={rescuedToWav}; HadCaptureStopErrors={recordingInfo.HadCaptureStopErrors}; Duration={recordingInfo.Duration}; Mode={recordingInfo.Mode}");
+            $"Recording saved. File={recordingInfo.FilePath}; Format={recordingInfo.Format.ToDisplayName()}; Requested={requestedFormat.ToDisplayName()}; RescuedToWav={rescuedToWav}; RescuedToMp3={rescuedToMp3}; HadCaptureStopErrors={recordingInfo.HadCaptureStopErrors}; Duration={recordingInfo.Duration}; Mode={recordingInfo.Mode}");
         return recordingInfo;
     }
 
     private static bool HasPcmData(string? path)
     {
         return path is not null && File.Exists(path) && new FileInfo(path).Length > 0;
+    }
+
+    /// <summary>
+    /// Read-only quality classification of the active microphone endpoint and its
+    /// capture format. ELARA never changes device configuration or switches
+    /// endpoints because of this classification; it only logs and surfaces the
+    /// finding in the UI. A telephony profile name alone is not a warning — it
+    /// is only surfaced together with an actual reduced-bandwidth capture
+    /// format, so high-quality USB speakerphones or headsets stay clean.
+    /// </summary>
+    private void LogEndpointQualityClassification(
+        string? deviceName,
+        CapturedStreamFormat? captureFormat)
+    {
+        if (captureFormat is { } activeFormat)
+        {
+            if (EndpointQualityClassifier.BuildLowBandwidthWarning(activeFormat.SampleRate) is { } lowBandwidth)
+            {
+                AppLogger.Warn(
+                    $"The active microphone capture format is {activeFormat.Description}. {lowBandwidth}");
+            }
+
+            if (EndpointQualityClassifier.IsStrongTelephonyProfileName(deviceName)
+                && EndpointQualityClassifier.HasReducedBandwidthIndicator(activeFormat.SampleRate))
+            {
+                AppLogger.Warn(
+                    $"The active microphone endpoint '{deviceName}' is classified as a possible telephony / hands-free style endpoint. Capture quality may be reduced. ELARA has not changed any device configuration or endpoint.");
+            }
+        }
     }
 
     private static string GetUniqueRecordingBaseName(string directory, string baseName)
@@ -553,10 +649,16 @@ public sealed class AudioCaptureService : IDisposable
         // COM objects and closes the PCM file once the thread terminates.
         microphoneSource = null;
         systemSource = null;
+        // Timed-out workers still access the shared coordinator until their finally
+        // blocks complete, so it must not be disposed here.
+        captureCoordinator = null;
         ActiveMicrophoneDeviceId = null;
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
         ActiveSystemDeviceName = null;
+        ActiveMicrophoneFormat = null;
+        ActiveSystemFormat = null;
+        ActiveMicrophoneRawActivated = null;
         AppLogger.Warn(
             "Capture sources were abandoned after a stop timeout. Their worker threads release COM objects and close the PCM files on exit.");
     }
@@ -583,20 +685,24 @@ public sealed class AudioCaptureService : IDisposable
             case CaptureMode.Both:
                 if (format == OutputFormat.Mp3)
                 {
-                    Mp3Utility.WriteStereoMp3FromMonoPcm(
-                        tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
-                        tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
-                        path,
-                        TargetSampleRate);
-                }
-                else
-                {
-                    WavUtility.WriteStereoWavFromMonoPcm(
+                    Mp3Utility.WriteMonoMixMp3FromMonoPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         path,
                         TargetSampleRate,
-                        TargetOutputBitsPerSample);
+                        systemSource?.FirstQpcPosition,
+                        microphoneSource?.FirstQpcPosition);
+                }
+                else
+                {
+                    WavUtility.WriteMonoMixWavFromMonoPcm(
+                        tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
+                        tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
+                        path,
+                        TargetSampleRate,
+                        TargetOutputBitsPerSample,
+                        systemSource?.FirstQpcPosition,
+                        microphoneSource?.FirstQpcPosition);
                 }
 
                 break;
@@ -662,10 +768,15 @@ public sealed class AudioCaptureService : IDisposable
         systemSource?.Dispose();
         microphoneSource = null;
         systemSource = null;
+        captureCoordinator?.Dispose();
+        captureCoordinator = null;
         ActiveMicrophoneDeviceId = null;
         ActiveMicrophoneDeviceName = null;
         ActiveSystemDeviceId = null;
         ActiveSystemDeviceName = null;
+        ActiveMicrophoneFormat = null;
+        ActiveSystemFormat = null;
+        ActiveMicrophoneRawActivated = null;
     }
 
     private void CleanupTempFiles()
