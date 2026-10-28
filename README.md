@@ -19,7 +19,7 @@ A lightweight Windows desktop recorder for microphone and system audio.
 - Visible mode and device selectors in the main window
 - Configurable recording location
 - System tray integration (hide to tray, restore, exit)
-- Application icon and version display (v1.1.0)
+- Application icon and version display (v1.2.0)
 - Persistent settings (devices, last used format, output location)
 - MP3-to-WAV rescue if MP3 encoding fails, and WAV-to-MP3 rescue if a recording exceeds the WAV (RIFF) size limit
 - Raw PCM data is preserved in critical failure cases
@@ -39,7 +39,7 @@ Original copyright/license notices remain preserved.
 
 ## Status
 
-Version 1.1.0
+Version 1.2.0
 
 ## Third-party libraries
 

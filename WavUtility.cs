@@ -1,19 +1,32 @@
+using System.Buffers;
+using System.Diagnostics;
+
 namespace ELARA;
 
 internal static class WavUtility
 {
     /// <summary>Largest PCM data length representable in a standard RIFF/WAV header.</summary>
     private const long MaximumWavDataLengthBytes = int.MaxValue - 8;
+    private const int CopyBufferBytes = 1024 * 1024;
+    private const int SignalScanBufferBytes = 64 * 1024;
 
-    public static void WriteMonoWavFromPcm(
+    public static SaveTimings WriteMonoWavFromPcm(
         string pcmPath,
         string wavPath,
         int sampleRate,
         short bitsPerSample,
-        bool isMicrophoneTrack = false)
+        bool isMicrophoneTrack = false,
+        SaveProgressReporter? reporter = null)
     {
-        using var input = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        var dataLength = input.BaseStream.Length;
+        var timings = new SaveTimings();
+        using var input = new FileStream(
+            pcmPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            CopyBufferBytes,
+            FileOptions.SequentialScan);
+        var dataLength = input.Length;
         if (dataLength > MaximumWavDataLengthBytes)
         {
             // Never overflow the RIFF header for multi-hour recordings; the caller
@@ -22,73 +35,141 @@ internal static class WavUtility
                 $"The recording is too long for the WAV (RIFF) format ({dataLength} bytes of PCM data). Use the MP3 output format for such long sessions.");
         }
 
-        using var output = new FileStream(wavPath, FileMode.Create, FileAccess.Write, FileShare.None);
+        using var output = new FileStream(
+            wavPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            CopyBufferBytes,
+            FileOptions.SequentialScan);
         using var writer = new BinaryWriter(output);
 
         WriteWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
 
-        while (input.BaseStream.Position < input.BaseStream.Length)
+        // The temporary file already holds canonical PCM16 mono samples, so the
+        // bytes can be copied verbatim. No per-sample ReadInt16/Write(short).
+        var buffer = ArrayPool<byte>.Shared.Rent(CopyBufferBytes);
+        var writeStopwatch = new Stopwatch();
+        try
         {
-            writer.Write(input.ReadInt16());
+            reporter?.Report(SaveStage.Encoding, 0, "Writing WAV audio…");
+            long bytesCopied = 0;
+            int bytesRead;
+            while ((bytesRead = input.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                writeStopwatch.Start();
+                output.Write(buffer, 0, bytesRead);
+                writeStopwatch.Stop();
+                bytesCopied += bytesRead;
+                if (dataLength > 0)
+                {
+                    reporter?.Report(
+                        SaveStage.Encoding,
+                        (int)Math.Min(99, bytesCopied * 100 / dataLength),
+                        "Writing WAV audio…");
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
+        timings.WavWriting = writeStopwatch.Elapsed;
         FinalizeWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
         AppLogger.Info(
             $"Mono WAV written without gain or loudness processing. File={wavPath}; Track={(isMicrophoneTrack ? "Microphone" : "System")}");
+        return timings;
     }
 
-    public static void WriteMonoMixWavFromMonoPcm(
+    public static SaveTimings WriteMonoMixWavFromMonoPcm(
         string systemPcmPath,
         string microphonePcmPath,
         string wavPath,
         int sampleRate,
         short bitsPerSample,
         long? systemFirstQpcPosition,
-        long? microphoneFirstQpcPosition)
+        long? microphoneFirstQpcPosition,
+        SaveProgressReporter? reporter = null,
+        bool? systemHasSignal = null,
+        bool? microphoneHasSignal = null)
     {
-        var systemHasSignal = PcmFileHasSignal(systemPcmPath);
-        var microphoneHasSignal = PcmFileHasSignal(microphonePcmPath);
-        var (systemGain, microphoneGain) = BothMixProfile.SelectMixGains(systemHasSignal, microphoneHasSignal);
-
-        using var system = new BinaryReader(new FileStream(systemPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        using var microphone = new BinaryReader(new FileStream(microphonePcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        using var output = new FileStream(wavPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        using var writer = new BinaryWriter(output);
-
-        var systemFrames = system.BaseStream.Length / 2;
-        var microphoneFrames = microphone.BaseStream.Length / 2;
-        var (systemStartOffset, microphoneStartOffset) = CalculateStartOffsets(
+        var systemSignal = systemHasSignal ?? PcmFileHasSignal(systemPcmPath);
+        var microphoneSignal = microphoneHasSignal ?? PcmFileHasSignal(microphonePcmPath);
+        var plan = BothPcmMixer.CreatePlan(
+            systemPcmPath,
+            microphonePcmPath,
+            sampleRate,
             systemFirstQpcPosition,
             microphoneFirstQpcPosition,
-            sampleRate);
-        var totalFrames = Math.Max(systemStartOffset + systemFrames, microphoneStartOffset + microphoneFrames);
-        var dataLength = totalFrames * 2;
+            systemSignal,
+            microphoneSignal);
+        var dataLength = plan.TotalFrames * sizeof(short);
         if (dataLength > MaximumWavDataLengthBytes)
         {
             throw new InvalidOperationException(
                 $"The recording is too long for the WAV (RIFF) format ({dataLength} bytes of PCM data). Use the MP3 output format for such long sessions.");
         }
 
+        var timings = new SaveTimings();
+        using var mixer = new BothPcmMixer(plan, systemPcmPath, microphonePcmPath);
+        using var output = new FileStream(
+            wavPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            CopyBufferBytes,
+            FileOptions.SequentialScan);
+        using var writer = new BinaryWriter(output);
+
         WriteWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
 
-        for (long index = 0; index < totalFrames; index++)
+        var buffer = ArrayPool<byte>.Shared.Rent(BothPcmMixer.FramesPerBlock * sizeof(short));
+        var mixStopwatch = new Stopwatch();
+        var writeStopwatch = new Stopwatch();
+        try
         {
-            var systemIndex = index - systemStartOffset;
-            var microphoneIndex = index - microphoneStartOffset;
-            var systemSample = systemIndex >= 0 && systemIndex < systemFrames ? system.ReadInt16() : (short)0;
-            var microphoneSample = microphoneIndex >= 0 && microphoneIndex < microphoneFrames ? microphone.ReadInt16() : (short)0;
-            writer.Write(BothMixProfile.MixFrame(systemSample, microphoneSample, systemGain, microphoneGain));
+            reporter?.Report(SaveStage.Mixing, 0, "Mixing system audio and microphone…");
+            while (true)
+            {
+                mixStopwatch.Start();
+                var byteCount = mixer.ReadBlock(buffer);
+                mixStopwatch.Stop();
+                if (byteCount == 0)
+                {
+                    break;
+                }
+
+                writeStopwatch.Start();
+                output.Write(buffer, 0, byteCount);
+                writeStopwatch.Stop();
+
+                if (plan.TotalFrames > 0)
+                {
+                    reporter?.Report(
+                        SaveStage.Mixing,
+                        (int)Math.Min(99, mixer.FramesProcessed * 100 / plan.TotalFrames),
+                        "Mixing system audio and microphone…");
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
+        timings.Mixing = mixStopwatch.Elapsed;
+        timings.WavWriting = writeStopwatch.Elapsed;
         FinalizeWaveHeader(writer, channels: 1, sampleRate, bitsPerSample, dataLength);
         AppLogger.Info(
-            $"Mono-mix WAV written without gain or loudness processing. File={wavPath}; Mix={BothMixProfile.DescribeMixMode(systemHasSignal, microphoneHasSignal)}; SystemStartOffsetFrames={systemStartOffset}; MicrophoneStartOffsetFrames={microphoneStartOffset}");
+            $"Mono-mix WAV written without gain or loudness processing. File={wavPath}; Mix={BothMixProfile.DescribeMixMode(systemSignal, microphoneSignal)}; SystemStartOffsetFrames={plan.SystemStartOffsetFrames}; MicrophoneStartOffsetFrames={plan.MicrophoneStartOffsetFrames}");
+        return timings;
     }
 
     /// <summary>
     /// Streaming signal check for a raw PCM16 file: true when it contains at
-    /// least one non-zero sample. Reads sequentially, so multi-hour temp files
-    /// never need to be buffered in memory.
+    /// least one non-zero sample. The file is scanned in blocks; a complete
+    /// little-endian sample is non-silent when either of its bytes is non-zero.
     /// </summary>
     internal static bool PcmFileHasSignal(string path)
     {
@@ -97,13 +178,52 @@ internal static class WavUtility
             return false;
         }
 
-        using var input = new BinaryReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read));
-        while (input.BaseStream.Position + 1 < input.BaseStream.Length)
+        using var input = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            SignalScanBufferBytes,
+            FileOptions.SequentialScan);
+        var buffer = ArrayPool<byte>.Shared.Rent(SignalScanBufferBytes);
+        var hasCarryByte = false;
+        byte carryByte = 0;
+        try
         {
-            if (input.ReadInt16() != 0)
+            int bytesRead;
+            while ((bytesRead = input.Read(buffer, 0, buffer.Length)) > 0)
             {
-                return true;
+                var index = 0;
+                if (hasCarryByte)
+                {
+                    // Complete the sample that straddled the previous block.
+                    if ((carryByte | buffer[0]) != 0)
+                    {
+                        return true;
+                    }
+
+                    hasCarryByte = false;
+                    index = 1;
+                }
+
+                for (; index + 1 < bytesRead; index += sizeof(short))
+                {
+                    if (buffer[index] != 0 || buffer[index + 1] != 0)
+                    {
+                        return true;
+                    }
+                }
+
+                if (index < bytesRead)
+                {
+                    carryByte = buffer[index];
+                    hasCarryByte = true;
+                }
             }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
         return false;

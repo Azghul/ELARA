@@ -1,5 +1,16 @@
 # Changelog
 
+# 1.2.0
+
+- New Saving progress UI with orange Saving state and progress indicator
+- Block-based PCM processing for faster finalization
+- Faster WAV writing
+- Faster microphone/system signal detection
+- Optimized block-based microphone/system audio mixing
+- Save-stage progress reporting
+- Detailed save-performance timing logs
+- Audio mixing, QPC alignment and output quality remain unchanged
+
 # 1.1.0
 
 - Adaptive theme system: System (new default; follows the Windows app

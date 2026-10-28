@@ -95,6 +95,16 @@ internal sealed record UiThemePalette
 
     public required Color StopButtonEnd { get; init; }
 
+    public required Color SaveButtonStart { get; init; }
+
+    public required Color SaveButtonEnd { get; init; }
+
+    public required Color SaveButtonText { get; init; }
+
+    public required Color SaveProgressTrack { get; init; }
+
+    public required Color SaveProgressFill { get; init; }
+
     public required Color StatusIdle { get; init; }
 
     public required Color StatusRecording { get; init; }
@@ -118,7 +128,8 @@ internal sealed record UiThemePalette
     public Color StatusColor(StatusKind kind) => kind switch
     {
         StatusKind.Recording or StatusKind.Error => StatusRecording,
-        StatusKind.Starting or StatusKind.Saving => StatusSaving,
+        StatusKind.Saving => SaveButtonStart,
+        StatusKind.Starting => StatusSaving,
         StatusKind.Saved => StatusSaved,
         StatusKind.Blocked => StatusBlocked,
         _ => StatusIdle,
@@ -162,6 +173,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(70, 75, 110),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(255, 166, 76),
+        SaveButtonEnd = Color.FromArgb(238, 128, 38),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(60, 255, 180, 100),
+        SaveProgressFill = Color.FromArgb(255, 184, 96),
         StatusIdle = Color.FromArgb(150, 136, 255),
         StatusRecording = Color.FromArgb(255, 142, 168),
         StatusSaving = Color.FromArgb(255, 211, 122),
@@ -208,6 +224,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(86, 88, 96),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(255, 164, 72),
+        SaveButtonEnd = Color.FromArgb(235, 126, 36),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(58, 255, 180, 100),
+        SaveProgressFill = Color.FromArgb(255, 182, 94),
         StatusIdle = Color.FromArgb(154, 140, 255),
         StatusRecording = Color.FromArgb(255, 142, 168),
         StatusSaving = Color.FromArgb(255, 211, 122),
@@ -253,6 +274,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(202, 206, 220),
         StopButtonStart = Color.FromArgb(226, 76, 102),
         StopButtonEnd = Color.FromArgb(214, 66, 92),
+        SaveButtonStart = Color.FromArgb(241, 140, 36),
+        SaveButtonEnd = Color.FromArgb(220, 112, 18),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(60, 200, 120, 40),
+        SaveProgressFill = Color.FromArgb(232, 126, 26),
         StatusIdle = Color.FromArgb(104, 86, 242),
         StatusRecording = Color.FromArgb(198, 32, 72),
         StatusSaving = Color.FromArgb(172, 110, 0),
@@ -297,6 +323,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(92, 95, 102),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(255, 168, 78),
+        SaveButtonEnd = Color.FromArgb(236, 130, 40),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(60, 255, 180, 100),
+        SaveProgressFill = Color.FromArgb(255, 186, 98),
         StatusIdle = Color.FromArgb(167, 175, 255),
         StatusRecording = Color.FromArgb(255, 139, 158),
         StatusSaving = Color.FromArgb(255, 203, 112),
@@ -340,6 +371,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(72, 98, 130),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(255, 164, 70),
+        SaveButtonEnd = Color.FromArgb(236, 126, 34),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(60, 255, 180, 100),
+        SaveProgressFill = Color.FromArgb(255, 184, 96),
         StatusIdle = Color.FromArgb(132, 202, 255),
         StatusRecording = Color.FromArgb(255, 132, 150),
         StatusSaving = Color.FromArgb(255, 205, 110),
@@ -385,6 +421,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(80, 110, 112),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(250, 158, 64),
+        SaveButtonEnd = Color.FromArgb(232, 122, 32),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(60, 255, 180, 100),
+        SaveProgressFill = Color.FromArgb(255, 178, 90),
         StatusIdle = Color.FromArgb(130, 232, 208),
         StatusRecording = Color.FromArgb(255, 132, 150),
         StatusSaving = Color.FromArgb(255, 205, 110),
@@ -428,6 +469,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(118, 92, 78),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(255, 156, 68),
+        SaveButtonEnd = Color.FromArgb(236, 112, 28),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(62, 255, 185, 105),
+        SaveProgressFill = Color.FromArgb(255, 180, 90),
         StatusIdle = Color.FromArgb(255, 162, 112),
         StatusRecording = Color.FromArgb(255, 132, 150),
         StatusSaving = Color.FromArgb(255, 205, 110),
@@ -473,6 +519,11 @@ internal static class UiTheme
         DisabledBlend = Color.FromArgb(120, 90, 106),
         StopButtonStart = Color.FromArgb(255, 98, 129),
         StopButtonEnd = Color.FromArgb(255, 88, 119),
+        SaveButtonStart = Color.FromArgb(255, 162, 72),
+        SaveButtonEnd = Color.FromArgb(238, 124, 34),
+        SaveButtonText = Color.White,
+        SaveProgressTrack = Color.FromArgb(60, 255, 180, 100),
+        SaveProgressFill = Color.FromArgb(255, 184, 96),
         StatusIdle = Color.FromArgb(255, 152, 188),
         StatusRecording = Color.FromArgb(255, 110, 140),
         StatusSaving = Color.FromArgb(255, 205, 110),

@@ -106,12 +106,12 @@ public sealed class AudioCaptureService : IDisposable
         }
     }
 
-    public async Task<RecordingInfo> StopAsync()
+    public async Task<RecordingInfo> StopAsync(IProgress<SaveProgress>? progress = null)
     {
         await transitionLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            return StopCore();
+            return StopCore(progress);
         }
         finally
         {
@@ -364,17 +364,23 @@ public sealed class AudioCaptureService : IDisposable
         return startupError;
     }
 
-    private RecordingInfo StopCore()
+    private RecordingInfo StopCore(IProgress<SaveProgress>? progress = null)
     {
         if (!IsRecording)
         {
             throw new InvalidOperationException("There is no active recording to stop.");
         }
 
+        var reporter = new SaveProgressReporter(progress);
+        var timings = new SaveTimings();
+        var totalStopwatch = Stopwatch.StartNew();
+        reporter.Report(SaveStage.Stopping, null, "Stopping capture sources…");
+
         // PHASE 1: signal every active capture source together, then join each worker
         // independently so that a failure on one never prevents the other from flushing.
         var stopErrors = new List<Exception>();
         var timedOut = false;
+        var stopSourcesStopwatch = Stopwatch.StartNew();
 
         // Both workers observe the same stop edge and drain concurrently before they join.
         captureCoordinator?.RequestStop();
@@ -417,10 +423,15 @@ public sealed class AudioCaptureService : IDisposable
             }
         }
 
+        stopSourcesStopwatch.Stop();
+        timings.StopSources = stopSourcesStopwatch.Elapsed;
+
         stopwatch.Stop();
         IsRecording = false;
         Interlocked.Exchange(ref peakMilli, 0);
 
+        bool? systemHasSignal = null;
+        bool? microphoneHasSignal = null;
         try
         {
             // PHASE 2: a stop timeout means the worker thread may still be writing to the
@@ -433,17 +444,41 @@ public sealed class AudioCaptureService : IDisposable
                     $"The capture source could not be stopped safely. Raw audio was kept at: {tempDirectory}");
             }
 
-            // PHASE 3: classify the captured raw PCM data.
+            // PHASE 3: classify the captured raw PCM data. Both mode also scans the
+            // signal state once here so the encoder does not have to scan twice.
+            reporter.Report(SaveStage.Stopping, null, "Analyzing captured audio…");
+            var classificationStopwatch = Stopwatch.StartNew();
             var anyPcmData = HasPcmData(tempMicrophonePath) || HasPcmData(tempSystemPath);
+            var requiredPcmDataComplete = RequiredPcmDataComplete();
+            if (currentMode == CaptureMode.Both)
+            {
+                try
+                {
+                    systemHasSignal = WavUtility.PcmFileHasSignal(tempSystemPath ?? string.Empty);
+                    microphoneHasSignal = WavUtility.PcmFileHasSignal(tempMicrophonePath ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    // Preserve the existing rescue path: the encoder retries the scan
+                    // and a persistent I/O failure is handled by the save rescue logic.
+                    AppLogger.Warn($"Signal classification failed; the encoder will retry the scan. {ex.Message}");
+                    systemHasSignal = null;
+                    microphoneHasSignal = null;
+                }
+            }
+
+            classificationStopwatch.Stop();
+            timings.Classification = classificationStopwatch.Elapsed;
+
             if (!anyPcmData)
             {
                 // Nothing usable was captured at all, so normal cleanup is safe.
-                CleanupTempFiles();
+                CleanupTempFilesWithTiming(timings);
                 throw new InvalidOperationException(
                     "No audio was captured. If you recorded system audio, make sure audio was actively playing.");
             }
 
-            if (!RequiredPcmDataComplete())
+            if (!requiredPcmDataComplete)
             {
                 // Both mode with a clean start/stop may legitimately contain one empty
                 // track (for example no system audio was playing); it is saved as silence.
@@ -463,16 +498,36 @@ public sealed class AudioCaptureService : IDisposable
 
             // PHASE 4 + 5: produce the final file. Only a successfully written and validated
             // final file may trigger the temporary cleanup.
-            return SaveRecording(stopErrors);
+            return SaveRecording(stopErrors, reporter, timings, systemHasSignal, microphoneHasSignal);
         }
         finally
         {
             // Releases COM/thread references only; never touches temporary files.
             CleanupCaptureSources();
+            totalStopwatch.Stop();
+            LogSaveTimings(timings, totalStopwatch.Elapsed);
         }
     }
 
-    private RecordingInfo SaveRecording(List<Exception> stopErrors)
+    private static void LogSaveTimings(SaveTimings timings, TimeSpan total)
+    {
+        AppLogger.Info(
+            $"Save timing: StopSources={timings.StopSources.TotalMilliseconds:0} ms; " +
+            $"Classification={timings.Classification.TotalMilliseconds:0} ms; " +
+            $"Mixing={timings.Mixing.TotalMilliseconds:0} ms; " +
+            $"WavWriting={timings.WavWriting.TotalMilliseconds:0} ms; " +
+            $"Mp3Encoding={timings.Mp3Encoding.TotalMilliseconds:0} ms; " +
+            $"Validation={timings.Validation.TotalMilliseconds:0} ms; " +
+            $"Cleanup={timings.Cleanup.TotalMilliseconds:0} ms; " +
+            $"Total={total.TotalMilliseconds:0} ms");
+    }
+
+    private RecordingInfo SaveRecording(
+        List<Exception> stopErrors,
+        SaveProgressReporter reporter,
+        SaveTimings timings,
+        bool? systemHasSignal,
+        bool? microphoneHasSignal)
     {
         var requestedFormat = currentFormat;
         var outputDirectory = Path.GetDirectoryName(outputFilePath);
@@ -495,8 +550,8 @@ public sealed class AudioCaptureService : IDisposable
             {
                 try
                 {
-                    EncodeOutput(OutputFormat.Mp3, mp3Path);
-                    ValidateOutputFile(mp3Path, OutputFormat.Mp3);
+                    EncodeOutput(OutputFormat.Mp3, mp3Path, reporter, timings, systemHasSignal, microphoneHasSignal);
+                    ValidateOutputFileWithTiming(mp3Path, OutputFormat.Mp3, timings);
                     finalPath = mp3Path;
                 }
                 catch (Exception mp3Error)
@@ -506,8 +561,8 @@ public sealed class AudioCaptureService : IDisposable
                     TryDeleteFile(mp3Path);
                     // The user chose "meeting.mp3"; never overwrite an existing meeting.wav.
                     var rescueWavPath = OutputPathUtility.ResolveRescueWavPath(mp3Path);
-                    EncodeOutput(OutputFormat.Wav, rescueWavPath);
-                    ValidateOutputFile(rescueWavPath, OutputFormat.Wav);
+                    EncodeOutput(OutputFormat.Wav, rescueWavPath, reporter, timings, systemHasSignal, microphoneHasSignal);
+                    ValidateOutputFileWithTiming(rescueWavPath, OutputFormat.Wav, timings);
                     rescuedToWav = true;
                     finalPath = rescueWavPath;
                 }
@@ -516,8 +571,8 @@ public sealed class AudioCaptureService : IDisposable
             {
                 try
                 {
-                    EncodeOutput(OutputFormat.Wav, wavPath);
-                    ValidateOutputFile(wavPath, OutputFormat.Wav);
+                    EncodeOutput(OutputFormat.Wav, wavPath, reporter, timings, systemHasSignal, microphoneHasSignal);
+                    ValidateOutputFileWithTiming(wavPath, OutputFormat.Wav, timings);
                     finalPath = wavPath;
                 }
                 catch (Exception wavError)
@@ -529,8 +584,8 @@ public sealed class AudioCaptureService : IDisposable
                     TryDeleteFile(wavPath);
                     // The user chose "meeting.wav"; never overwrite an existing meeting.mp3.
                     var rescueMp3Path = OutputPathUtility.ResolveRescueMp3Path(wavPath);
-                    EncodeOutput(OutputFormat.Mp3, rescueMp3Path);
-                    ValidateOutputFile(rescueMp3Path, OutputFormat.Mp3);
+                    EncodeOutput(OutputFormat.Mp3, rescueMp3Path, reporter, timings, systemHasSignal, microphoneHasSignal);
+                    ValidateOutputFileWithTiming(rescueMp3Path, OutputFormat.Mp3, timings);
                     rescuedToMp3 = true;
                     finalPath = rescueMp3Path;
                 }
@@ -546,7 +601,8 @@ public sealed class AudioCaptureService : IDisposable
         }
 
         // A valid final file exists: the temporary raw data is no longer needed.
-        CleanupTempFiles();
+        CleanupTempFilesWithTiming(timings);
+        reporter.Report(SaveStage.Finalizing, 100, "Recording saved.");
 
         var recordingInfo = new RecordingInfo(
             finalPath,
@@ -678,31 +734,44 @@ public sealed class AudioCaptureService : IDisposable
         }
     }
 
-    private void EncodeOutput(OutputFormat format, string path)
+    private void EncodeOutput(
+        OutputFormat format,
+        string path,
+        SaveProgressReporter reporter,
+        SaveTimings timings,
+        bool? systemHasSignal,
+        bool? microphoneHasSignal)
     {
+        SaveTimings encodeTimings;
         switch (currentMode)
         {
             case CaptureMode.Both:
                 if (format == OutputFormat.Mp3)
                 {
-                    Mp3Utility.WriteMonoMixMp3FromMonoPcm(
+                    encodeTimings = Mp3Utility.WriteMonoMixMp3FromMonoPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         path,
                         TargetSampleRate,
                         systemSource?.FirstQpcPosition,
-                        microphoneSource?.FirstQpcPosition);
+                        microphoneSource?.FirstQpcPosition,
+                        reporter,
+                        systemHasSignal,
+                        microphoneHasSignal);
                 }
                 else
                 {
-                    WavUtility.WriteMonoMixWavFromMonoPcm(
+                    encodeTimings = WavUtility.WriteMonoMixWavFromMonoPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         path,
                         TargetSampleRate,
                         TargetOutputBitsPerSample,
                         systemSource?.FirstQpcPosition,
-                        microphoneSource?.FirstQpcPosition);
+                        microphoneSource?.FirstQpcPosition,
+                        reporter,
+                        systemHasSignal,
+                        microphoneHasSignal);
                 }
 
                 break;
@@ -710,20 +779,22 @@ public sealed class AudioCaptureService : IDisposable
             case CaptureMode.Microphone:
                 if (format == OutputFormat.Mp3)
                 {
-                    Mp3Utility.WriteMonoMp3FromPcm(
+                    encodeTimings = Mp3Utility.WriteMonoMp3FromPcm(
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         path,
                         TargetSampleRate,
-                        isMicrophoneTrack: true);
+                        isMicrophoneTrack: true,
+                        reporter);
                 }
                 else
                 {
-                    WavUtility.WriteMonoWavFromPcm(
+                    encodeTimings = WavUtility.WriteMonoWavFromPcm(
                         tempMicrophonePath ?? throw new InvalidOperationException("Missing microphone capture."),
                         path,
                         TargetSampleRate,
                         TargetOutputBitsPerSample,
-                        isMicrophoneTrack: true);
+                        isMicrophoneTrack: true,
+                        reporter);
                 }
 
                 break;
@@ -731,23 +802,45 @@ public sealed class AudioCaptureService : IDisposable
             case CaptureMode.System:
                 if (format == OutputFormat.Mp3)
                 {
-                    Mp3Utility.WriteMonoMp3FromPcm(
+                    encodeTimings = Mp3Utility.WriteMonoMp3FromPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         path,
                         TargetSampleRate,
-                        isMicrophoneTrack: false);
+                        isMicrophoneTrack: false,
+                        reporter);
                 }
                 else
                 {
-                    WavUtility.WriteMonoWavFromPcm(
+                    encodeTimings = WavUtility.WriteMonoWavFromPcm(
                         tempSystemPath ?? throw new InvalidOperationException("Missing system audio capture."),
                         path,
                         TargetSampleRate,
                         TargetOutputBitsPerSample,
-                        isMicrophoneTrack: false);
+                        isMicrophoneTrack: false,
+                        reporter);
                 }
 
                 break;
+
+            default:
+                throw new InvalidOperationException("The capture mode is not supported.");
+        }
+
+        timings.AddEncodeTimings(encodeTimings);
+        reporter.Report(SaveStage.Finalizing, null, "Validating the recording file…");
+    }
+
+    private static void ValidateOutputFileWithTiming(string path, OutputFormat format, SaveTimings timings)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            ValidateOutputFile(path, format);
+        }
+        finally
+        {
+            stopwatch.Stop();
+            timings.Validation += stopwatch.Elapsed;
         }
     }
 
@@ -777,6 +870,20 @@ public sealed class AudioCaptureService : IDisposable
         ActiveMicrophoneFormat = null;
         ActiveSystemFormat = null;
         ActiveMicrophoneRawActivated = null;
+    }
+
+    private void CleanupTempFilesWithTiming(SaveTimings timings)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            CleanupTempFiles();
+        }
+        finally
+        {
+            stopwatch.Stop();
+            timings.Cleanup += stopwatch.Elapsed;
+        }
     }
 
     private void CleanupTempFiles()

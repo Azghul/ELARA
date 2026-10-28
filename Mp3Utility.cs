@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Diagnostics;
 using NAudio.Lame;
 using NAudio.Wave;
 
@@ -6,79 +8,137 @@ namespace ELARA;
 internal static class Mp3Utility
 {
     private const int MonoChunkBytes = 64 * 1024;
-    private const int MixFramesPerChunk = 8192;
+    private const int SourceStreamBufferBytes = 64 * 1024;
 
-    public static void WriteMonoMp3FromPcm(
+    public static SaveTimings WriteMonoMp3FromPcm(
         string pcmPath,
         string mp3Path,
         int sampleRate,
-        bool isMicrophoneTrack = false)
+        bool isMicrophoneTrack = false,
+        SaveProgressReporter? reporter = null)
     {
-        using var input = new BinaryReader(new FileStream(pcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        using var output = new FileStream(mp3Path, FileMode.Create, FileAccess.Write, FileShare.None);
+        var timings = new SaveTimings();
+        using var input = new FileStream(
+            pcmPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            SourceStreamBufferBytes,
+            FileOptions.SequentialScan);
+        using var output = new FileStream(
+            mp3Path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            SourceStreamBufferBytes,
+            FileOptions.SequentialScan);
         using var encoder = new LameMP3FileWriter(output, new WaveFormat(sampleRate, 16, 1), RecordingOutputProfile.Mp3BitRateKbps);
 
+        var dataLength = input.Length;
         var buffer = new byte[MonoChunkBytes];
+        var encodeStopwatch = new Stopwatch();
+        reporter?.Report(SaveStage.Encoding, 0, "Encoding MP3 audio…");
+        long bytesProcessed = 0;
         int bytesRead;
         while ((bytesRead = input.Read(buffer, 0, buffer.Length)) > 0)
         {
             var usableBytes = bytesRead - (bytesRead & 1);
             if (usableBytes > 0)
             {
+                encodeStopwatch.Start();
                 encoder.Write(buffer, 0, usableBytes);
+                encodeStopwatch.Stop();
+            }
+
+            bytesProcessed += bytesRead;
+            if (dataLength > 0)
+            {
+                reporter?.Report(
+                    SaveStage.Encoding,
+                    (int)Math.Min(99, bytesProcessed * 100 / dataLength),
+                    "Encoding MP3 audio…");
             }
         }
 
+        timings.Mp3Encoding = encodeStopwatch.Elapsed;
         AppLogger.Info(
             $"Mono MP3 written without gain or loudness processing. File={mp3Path}; Track={(isMicrophoneTrack ? "Microphone" : "System")}; Profile={RecordingOutputProfile.Mp3ShortDescription}");
+        return timings;
     }
 
-    public static void WriteMonoMixMp3FromMonoPcm(
+    public static SaveTimings WriteMonoMixMp3FromMonoPcm(
         string systemPcmPath,
         string microphonePcmPath,
         string mp3Path,
         int sampleRate,
         long? systemFirstQpcPosition,
-        long? microphoneFirstQpcPosition)
+        long? microphoneFirstQpcPosition,
+        SaveProgressReporter? reporter = null,
+        bool? systemHasSignal = null,
+        bool? microphoneHasSignal = null)
     {
-        var systemHasSignal = WavUtility.PcmFileHasSignal(systemPcmPath);
-        var microphoneHasSignal = WavUtility.PcmFileHasSignal(microphonePcmPath);
-        var (systemGain, microphoneGain) = BothMixProfile.SelectMixGains(systemHasSignal, microphoneHasSignal);
-
-        using var system = new BinaryReader(new FileStream(systemPcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        using var microphone = new BinaryReader(new FileStream(microphonePcmPath, FileMode.Open, FileAccess.Read, FileShare.Read));
-        using var output = new FileStream(mp3Path, FileMode.Create, FileAccess.Write, FileShare.None);
-        using var encoder = new LameMP3FileWriter(output, new WaveFormat(sampleRate, 16, 1), RecordingOutputProfile.Mp3BitRateKbps);
-
-        var systemFrames = system.BaseStream.Length / 2;
-        var microphoneFrames = microphone.BaseStream.Length / 2;
-        var (systemStartOffset, microphoneStartOffset) = WavUtility.CalculateStartOffsets(
+        var systemSignal = systemHasSignal ?? WavUtility.PcmFileHasSignal(systemPcmPath);
+        var microphoneSignal = microphoneHasSignal ?? WavUtility.PcmFileHasSignal(microphonePcmPath);
+        var plan = BothPcmMixer.CreatePlan(
+            systemPcmPath,
+            microphonePcmPath,
+            sampleRate,
             systemFirstQpcPosition,
             microphoneFirstQpcPosition,
-            sampleRate);
-        var totalFrames = Math.Max(systemStartOffset + systemFrames, microphoneStartOffset + microphoneFrames);
+            systemSignal,
+            microphoneSignal);
 
-        var buffer = new byte[MixFramesPerChunk * 2];
-        for (var frameBase = 0L; frameBase < totalFrames; frameBase += MixFramesPerChunk)
+        var timings = new SaveTimings();
+        using var mixer = new BothPcmMixer(plan, systemPcmPath, microphonePcmPath);
+        using var output = new FileStream(
+            mp3Path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            SourceStreamBufferBytes,
+            FileOptions.SequentialScan);
+        using var encoder = new LameMP3FileWriter(output, new WaveFormat(sampleRate, 16, 1), RecordingOutputProfile.Mp3BitRateKbps);
+
+        var buffer = ArrayPool<byte>.Shared.Rent(BothPcmMixer.FramesPerBlock * sizeof(short));
+        var mixStopwatch = new Stopwatch();
+        var encodeStopwatch = new Stopwatch();
+        try
         {
-            var frameCount = (int)Math.Min(MixFramesPerChunk, totalFrames - frameBase);
-            var offset = 0;
-            for (var index = 0; index < frameCount; index++)
+            reporter?.Report(SaveStage.Encoding, 0, "Mixing and encoding MP3 audio…");
+            while (true)
             {
-                var frame = frameBase + index;
-                var systemIndex = frame - systemStartOffset;
-                var microphoneIndex = frame - microphoneStartOffset;
-                var systemSample = systemIndex >= 0 && systemIndex < systemFrames ? system.ReadInt16() : (short)0;
-                var microphoneSample = microphoneIndex >= 0 && microphoneIndex < microphoneFrames ? microphone.ReadInt16() : (short)0;
-                var mixedSample = BothMixProfile.MixFrame(systemSample, microphoneSample, systemGain, microphoneGain);
-                buffer[offset++] = (byte)mixedSample;
-                buffer[offset++] = (byte)(mixedSample >> 8);
-            }
+                mixStopwatch.Start();
+                var byteCount = mixer.ReadBlock(buffer);
+                mixStopwatch.Stop();
+                if (byteCount == 0)
+                {
+                    break;
+                }
 
-            encoder.Write(buffer, 0, offset);
+                // The mixed PCM block goes straight into the existing LAME writer:
+                // same 48 kHz / mono / 128 kbps profile, no resampling or DSP.
+                encodeStopwatch.Start();
+                encoder.Write(buffer, 0, byteCount);
+                encodeStopwatch.Stop();
+
+                if (plan.TotalFrames > 0)
+                {
+                    reporter?.Report(
+                        SaveStage.Encoding,
+                        (int)Math.Min(99, mixer.FramesProcessed * 100 / plan.TotalFrames),
+                        "Mixing and encoding MP3 audio…");
+                }
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
 
+        timings.Mixing = mixStopwatch.Elapsed;
+        timings.Mp3Encoding = encodeStopwatch.Elapsed;
         AppLogger.Info(
-            $"Mono-mix MP3 written without gain or loudness processing. File={mp3Path}; Profile={RecordingOutputProfile.Mp3ShortDescription}; Mix={BothMixProfile.DescribeMixMode(systemHasSignal, microphoneHasSignal)}; SystemStartOffsetFrames={systemStartOffset}; MicrophoneStartOffsetFrames={microphoneStartOffset}");
+            $"Mono-mix MP3 written without gain or loudness processing. File={mp3Path}; Profile={RecordingOutputProfile.Mp3ShortDescription}; Mix={BothMixProfile.DescribeMixMode(systemSignal, microphoneSignal)}; SystemStartOffsetFrames={plan.SystemStartOffsetFrames}; MicrophoneStartOffsetFrames={plan.MicrophoneStartOffsetFrames}");
+        return timings;
     }
 }

@@ -1,4 +1,5 @@
 using ELARA;
+using System.Buffers.Binary;
 using System.Drawing;
 using System.Text.Json;
 
@@ -91,6 +92,83 @@ try
     AssertEqual((short)-2500, BothMixProfile.MixFrame(-2500, 0, BothMixProfile.UnityGain, BothMixProfile.SilenceGain), "unity passthrough system");
     AssertEqual("System50Percent+Microphone50Percent", BothMixProfile.DescribeMixMode(true, true), "mix mode description 50/50");
     AssertEqual("MicrophoneUnity", BothMixProfile.DescribeMixMode(false, true), "mix mode description microphone unity");
+
+    // ------------------------------------------------------------------
+    // Block-wise PCM16 signal scan: full samples, including block
+    // boundaries, keep the exact silent/signal decision.
+    // ------------------------------------------------------------------
+    var signalBoundaryPositive = Path.Combine(testDirectory, "signal-boundary-positive.pcm");
+    WritePcmSamples(signalBoundaryPositive, BuildSamplesWithBoundarySignal(32768, 1));
+    AssertEqual(true, WavUtility.PcmFileHasSignal(signalBoundaryPositive), "signal scan finds +1 at a block boundary");
+
+    var signalBoundaryNegative = Path.Combine(testDirectory, "signal-boundary-negative.pcm");
+    WritePcmSamples(signalBoundaryNegative, BuildSamplesWithBoundarySignal(32768, -1));
+    AssertEqual(true, WavUtility.PcmFileHasSignal(signalBoundaryNegative), "signal scan finds -1 at a block boundary");
+
+    var silentAtBoundarySize = Path.Combine(testDirectory, "silent-boundary-size.pcm");
+    WritePcmSamples(silentAtBoundarySize, new short[32768 + 5]);
+    AssertEqual(false, WavUtility.PcmFileHasSignal(silentAtBoundarySize), "signal scan keeps a silent multi-block file silent");
+
+    // ------------------------------------------------------------------
+    // Single WAV fast path: the PCM payload is copied byte-identically and
+    // the RIFF header/data length stay valid for files above one copy block.
+    // ------------------------------------------------------------------
+    var largePcm = Path.Combine(testDirectory, "large-source.pcm");
+    var largePcmBytes = BuildPcmBytes(600_000);
+    File.WriteAllBytes(largePcm, largePcmBytes);
+    var largeWav = Path.Combine(testDirectory, "large-mono.wav");
+    WavUtility.WriteMonoWavFromPcm(largePcm, largeWav, sampleRate, bitsPerSample: 16, isMicrophoneTrack: true);
+    AssertWavMatchesPcm(largePcmBytes, largeWav);
+
+    // ------------------------------------------------------------------
+    // BothPcmMixer block mixer: every scenario is checked against the
+    // established BothMixProfile.MixFrame/CalculateStartOffsets arithmetic.
+    // ------------------------------------------------------------------
+    AssertBothMix(
+        testDirectory, "both-equal-length",
+        new short[] { 1000, 2000, 3000 },
+        new short[] { 3000, 4000, 5000 },
+        sampleRate, null, null, true, true);
+    AssertBothMix(
+        testDirectory, "both-different-length",
+        new short[] { 1000, 2000, 3000, 4000, 5000 },
+        new short[] { 3000, 4000, 5000 },
+        sampleRate, null, null, true, true);
+    AssertBothMix(
+        testDirectory, "both-positive-qpc",
+        new short[] { 1000, 2000, 3000 },
+        new short[] { 3000, 4000, 5000 },
+        sampleRate, 1_010_000, 1_000_000, true, true);
+    AssertBothMix(
+        testDirectory, "both-negative-qpc",
+        new short[] { 1000, 2000, 3000 },
+        new short[] { 3000, 4000, 5000 },
+        sampleRate, 1_000_000, 1_010_000, true, true);
+    AssertBothMix(
+        testDirectory, "both-null-qpc",
+        new short[] { -1000, 2000, -3000, 4000 },
+        new short[] { 3000, -4000, 5000 },
+        sampleRate, null, null, true, true);
+    AssertBothMix(
+        testDirectory, "both-only-mic-signal",
+        new short[] { 0, 0, 0 },
+        new short[] { 3000, 4000, 5000 },
+        sampleRate, null, null, false, true);
+    AssertBothMix(
+        testDirectory, "both-only-system-signal",
+        new short[] { -2500, 7500, 1250 },
+        new short[] { 0, 0 },
+        sampleRate, null, null, true, false);
+    AssertBothMix(
+        testDirectory, "both-silent",
+        new short[] { 0, 0, 0, 0 },
+        new short[] { 0, 0 },
+        sampleRate, null, null, false, false);
+    AssertBothMix(
+        testDirectory, "both-chunk-boundary",
+        BuildRampSamples(32768 + 17, 1),
+        BuildRampSamples(32768 + 17, -1),
+        sampleRate, 1_000_480, 1_000_000, true, true);
 
     // ------------------------------------------------------------------
     // Version display: reads the version dynamically, strips any
@@ -362,6 +440,48 @@ try
         }
     }
 
+    foreach (var palette in new[]
+    {
+        UiTheme.Resolve(AppTheme.System, windowsDark: true),
+        UiTheme.Resolve(AppTheme.System, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Midnight, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Graphite, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Light, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Ocean, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Teal, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Ember, windowsDark: false),
+        UiTheme.Resolve(AppTheme.Rose, windowsDark: false),
+    })
+    {
+        AssertEqual(false, palette.SaveButtonStart.IsEmpty, $"{palette.DisplayName} save button start token");
+        AssertEqual(false, palette.SaveButtonEnd.IsEmpty, $"{palette.DisplayName} save button end token");
+        AssertEqual(false, palette.SaveButtonText.IsEmpty, $"{palette.DisplayName} save button text token");
+        AssertEqual(false, palette.SaveProgressTrack.IsEmpty, $"{palette.DisplayName} save progress track token");
+        AssertEqual(false, palette.SaveProgressFill.IsEmpty, $"{palette.DisplayName} save progress fill token");
+        AssertEqual(palette.SaveButtonStart, palette.StatusColor(StatusKind.Saving), $"{palette.DisplayName} saving badge uses the warm save color");
+    }
+
+    // ------------------------------------------------------------------
+    // SaveProgress: percentage clamping, indeterminate values, stage
+    // changes and the one-percent report threshold.
+    // ------------------------------------------------------------------
+    AssertEqual(100, new SaveProgress(SaveStage.Encoding, 150, "clamp high").Percent, "progress percent clamps high");
+    AssertEqual(0, new SaveProgress(SaveStage.Encoding, -7, "clamp low").Percent, "progress percent clamps low");
+    AssertEqual(null, new SaveProgress(SaveStage.Mixing, null, "indeterminate").Percent, "progress percent may be indeterminate");
+    AssertEqual(SaveStage.Finalizing, new SaveProgress(SaveStage.Finalizing, 100, "done").Stage, "progress stage is preserved");
+    AssertEqual(4, Enum.GetValues<SaveStage>().Length, "save stages are Stopping, Mixing, Encoding, Finalizing");
+
+    var progressReports = new List<SaveProgress>();
+    var progressReporter = new SaveProgressReporter(new ListProgress(progressReports));
+    progressReporter.Report(SaveStage.Stopping, null, "stop");
+    progressReporter.Report(SaveStage.Stopping, null, "still stopping");
+    progressReporter.Report(SaveStage.Stopping, 50, "half");
+    progressReporter.Report(SaveStage.Stopping, 50, "unchanged");
+    progressReporter.Report(SaveStage.Stopping, 51, "one point");
+    progressReporter.Report(SaveStage.Mixing, 0, "stage change");
+    AssertEqual(4, progressReports.Count, "progress reporter throttles duplicates but reports every stage change");
+    AssertEqual(SaveStage.Mixing, progressReports[^1].Stage, "progress reporter forwards the last stage");
+
     var midnightPalette = UiTheme.Resolve(AppTheme.Midnight, windowsDark: true);
     var accentColor = Color.FromArgb(220, 120, 40);
     var accented = UiTheme.WithWindowsAccent(midnightPalette, accentColor);
@@ -370,6 +490,11 @@ try
     AssertEqual(midnightPalette.FieldBack, accented.FieldBack, "windows accent keeps the field background");
     AssertEqual(midnightPalette.TextTitle, accented.TextTitle, "windows accent keeps the title text");
     AssertEqual(midnightPalette.StatusRecording, accented.StatusRecording, "windows accent keeps semantic status colors");
+    AssertEqual(midnightPalette.SaveButtonStart, accented.SaveButtonStart, "windows accent never overrides the saving button start");
+    AssertEqual(midnightPalette.SaveButtonEnd, accented.SaveButtonEnd, "windows accent never overrides the saving button end");
+    AssertEqual(midnightPalette.SaveButtonText, accented.SaveButtonText, "windows accent never overrides the saving button text");
+    AssertEqual(midnightPalette.SaveProgressTrack, accented.SaveProgressTrack, "windows accent never overrides the save progress track");
+    AssertEqual(midnightPalette.SaveProgressFill, accented.SaveProgressFill, "windows accent never overrides the save progress fill");
     AssertEqual(false, accented.StatusIdle.Equals(midnightPalette.StatusIdle), "windows accent reuses the accent for the idle status");
 
     var lightAccent = UiTheme.WithWindowsAccent(midnightPalette, Color.FromArgb(244, 208, 63));
@@ -454,10 +579,173 @@ static void AssertWave(string path, short expectedChannels, short[] expectedSamp
     AssertEqual(reader.BaseStream.Length, reader.BaseStream.Position, "WAV end position");
 }
 
+static void WritePcmSamples(string path, short[] samples)
+{
+    using var writer = new BinaryWriter(File.Create(path));
+    foreach (var sample in samples)
+    {
+        writer.Write(sample);
+    }
+}
+
+static short[] BuildSamplesWithBoundarySignal(int zeroSampleCount, short signalSample)
+{
+    var samples = new short[zeroSampleCount + 1];
+    samples[^1] = signalSample;
+    return samples;
+}
+
+static short[] BuildRampSamples(int count, int seed)
+{
+    var samples = new short[count];
+    for (var index = 0; index < samples.Length; index++)
+    {
+        samples[index] = (short)((index % 3000) - 1500 + seed);
+    }
+
+    return samples;
+}
+
+static byte[] BuildPcmBytes(int sampleCount)
+{
+    var bytes = new byte[sampleCount * sizeof(short)];
+    for (var index = 0; index < sampleCount; index++)
+    {
+        var sample = (short)((index * 31) % 30000 - 15000);
+        BinaryPrimitives.WriteInt16LittleEndian(bytes.AsSpan(index * sizeof(short), sizeof(short)), sample);
+    }
+
+    return bytes;
+}
+
+static void AssertWavMatchesPcm(byte[] pcmBytes, string wavPath)
+{
+    var wavBytes = File.ReadAllBytes(wavPath);
+    using var reader = new BinaryReader(File.OpenRead(wavPath));
+    AssertEqual("RIFF", new string(reader.ReadChars(4)), "large WAV RIFF marker");
+    AssertEqual(36 + pcmBytes.Length, reader.ReadInt32(), "large WAV RIFF size");
+    AssertEqual("WAVE", new string(reader.ReadChars(4)), "large WAV WAVE marker");
+    AssertEqual("fmt ", new string(reader.ReadChars(4)), "large WAV format marker");
+    AssertEqual(16, reader.ReadInt32(), "large WAV format chunk size");
+    AssertEqual((short)1, reader.ReadInt16(), "large WAV PCM format tag");
+    AssertEqual((short)1, reader.ReadInt16(), "large WAV channel count");
+    AssertEqual(sampleRate, reader.ReadInt32(), "large WAV sample rate");
+    reader.BaseStream.Position = 36;
+    AssertEqual("data", new string(reader.ReadChars(4)), "large WAV data marker");
+    AssertEqual(pcmBytes.Length, reader.ReadInt32(), "large WAV data length");
+    AssertEqual(44 + pcmBytes.Length, wavBytes.Length, "large WAV file length");
+    AssertEqual(true, wavBytes.AsSpan(44).SequenceEqual(pcmBytes), "large WAV payload is byte-identical");
+}
+
+static void AssertBothMix(
+    string directory,
+    string name,
+    short[] systemSamples,
+    short[] microphoneSamples,
+    int sampleRate,
+    long? systemFirstQpcPosition,
+    long? microphoneFirstQpcPosition,
+    bool systemHasSignal,
+    bool microphoneHasSignal)
+{
+    var systemPath = Path.Combine(directory, name + "-system.pcm");
+    var microphonePath = Path.Combine(directory, name + "-microphone.pcm");
+    WritePcmSamples(systemPath, systemSamples);
+    WritePcmSamples(microphonePath, microphoneSamples);
+
+    var plan = BothPcmMixer.CreatePlan(
+        systemPath,
+        microphonePath,
+        sampleRate,
+        systemFirstQpcPosition,
+        microphoneFirstQpcPosition,
+        systemHasSignal,
+        microphoneHasSignal);
+    byte[] actual;
+    using (var mixer = new BothPcmMixer(plan, systemPath, microphonePath))
+    using (var output = new MemoryStream())
+    {
+        var buffer = new byte[BothPcmMixer.FramesPerBlock * sizeof(short)];
+        int bytesRead;
+        while ((bytesRead = mixer.ReadBlock(buffer)) > 0)
+        {
+            output.Write(buffer, 0, bytesRead);
+        }
+
+        actual = output.ToArray();
+    }
+
+    var expected = BuildExpectedMix(
+        systemSamples,
+        microphoneSamples,
+        sampleRate,
+        systemFirstQpcPosition,
+        microphoneFirstQpcPosition,
+        systemHasSignal,
+        microphoneHasSignal);
+    AssertEqual(expected.Length * sizeof(short), actual.Length, $"{name}: mixed frame count");
+    for (var index = 0; index < expected.Length; index++)
+    {
+        var actualSample = BinaryPrimitives.ReadInt16LittleEndian(
+            actual.AsSpan(index * sizeof(short), sizeof(short)));
+        AssertEqual(expected[index], actualSample, $"{name}: sample {index}");
+    }
+}
+
+static short[] BuildExpectedMix(
+    short[] systemSamples,
+    short[] microphoneSamples,
+    int sampleRate,
+    long? systemFirstQpcPosition,
+    long? microphoneFirstQpcPosition,
+    bool systemHasSignal,
+    bool microphoneHasSignal)
+{
+    var (systemStartOffset, microphoneStartOffset) = WavUtility.CalculateStartOffsets(
+        systemFirstQpcPosition,
+        microphoneFirstQpcPosition,
+        sampleRate);
+    var totalFrames = Math.Max(
+        systemStartOffset + systemSamples.Length,
+        microphoneStartOffset + microphoneSamples.Length);
+    var (systemGain, microphoneGain) = BothMixProfile.SelectMixGains(systemHasSignal, microphoneHasSignal);
+    var expected = new short[totalFrames];
+    for (var frame = 0; frame < expected.Length; frame++)
+    {
+        var systemIndex = frame - systemStartOffset;
+        var microphoneIndex = frame - microphoneStartOffset;
+        var systemSample = systemIndex >= 0 && systemIndex < systemSamples.Length
+            ? systemSamples[systemIndex]
+            : (short)0;
+        var microphoneSample = microphoneIndex >= 0 && microphoneIndex < microphoneSamples.Length
+            ? microphoneSamples[microphoneIndex]
+            : (short)0;
+        expected[frame] = BothMixProfile.MixFrame(systemSample, microphoneSample, systemGain, microphoneGain);
+    }
+
+    return expected;
+}
+
 static void AssertEqual<T>(T expected, T actual, string description)
 {
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
     {
         throw new InvalidOperationException($"{description}: expected '{expected}', actual '{actual}'.");
+    }
+}
+
+
+internal sealed class ListProgress : IProgress<SaveProgress>
+{
+    private readonly List<SaveProgress> reports;
+
+    public ListProgress(List<SaveProgress> reports)
+    {
+        this.reports = reports;
+    }
+
+    public void Report(SaveProgress value)
+    {
+        reports.Add(value);
     }
 }

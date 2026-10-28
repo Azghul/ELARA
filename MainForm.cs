@@ -560,6 +560,11 @@ public sealed class MainForm : Form
             timerLabel.Text = FormatElapsed(captureService.Elapsed);
         }
 
+        if (recordButton.IsSaving)
+        {
+            recordButton.AdvanceSaveAnimation();
+        }
+
         levelMeter.PushLevel(captureService.ConsumePeak(), captureService.IsRecording);
     }
 
@@ -692,6 +697,7 @@ public sealed class MainForm : Form
     private async Task StopRecordingAsync()
     {
         recordButton.Enabled = false;
+        recordButton.BeginSaving();
         UpdateStatus("Saving", StatusKind.Saving, "Finalizing the recording file and cleaning up the recording session.");
         recordingOperationInProgress = true;
 
@@ -700,7 +706,9 @@ public sealed class MainForm : Form
             AppLogger.Info("Stop requested from UI.");
             // Stopping, gain analysis and MP3/WAV encoding can take a while for long
             // recordings; keep them off the UI thread so the window stays responsive.
-            var info = await Task.Run(() => captureService.StopAsync());
+            // Progress<T> captures the UI context and marshals every stage update back.
+            var progress = new Progress<SaveProgress>(HandleSaveProgress);
+            var info = await Task.Run(() => captureService.StopAsync(progress));
             timerLabel.Text = "00:00";
             levelMeter.ResetMeter();
 
@@ -748,9 +756,22 @@ public sealed class MainForm : Form
         finally
         {
             uiTimer.Stop();
+            recordButton.EndSaving();
             recordingOperationInProgress = false;
             ApplyVisualState();
         }
+    }
+
+    private void HandleSaveProgress(SaveProgress progress)
+    {
+        // Late queued progress notifications must not revive the saving visual
+        // after the stop operation has already finished.
+        if (!recordButton.IsSaving)
+        {
+            return;
+        }
+
+        recordButton.ShowSaveProgress(progress);
     }
 
     private void ApplyVisualState()
@@ -1665,6 +1686,10 @@ public sealed class MainForm : Form
         private bool hovered;
         private bool pressed;
         private bool isRecording;
+        private bool isSaving;
+        private int? savePercent;
+        private int saveAnimationOffset;
+        private readonly Font savePercentFont = new("Segoe UI Semibold", 8F, FontStyle.Bold, GraphicsUnit.Point);
         private UiThemePalette palette = ThemeManager.Current;
 
         public RecordActionButton()
@@ -1700,6 +1725,54 @@ public sealed class MainForm : Form
             }
         }
 
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool IsSaving => isSaving;
+
+        public void BeginSaving()
+        {
+            isSaving = true;
+            savePercent = null;
+            saveAnimationOffset = 0;
+            hovered = false;
+            pressed = false;
+            Cursor = Cursors.Default;
+            Invalidate();
+        }
+
+        public void EndSaving()
+        {
+            isSaving = false;
+            savePercent = null;
+            Cursor = Cursors.Hand;
+            Invalidate();
+        }
+
+        public void ShowSaveProgress(SaveProgress progress)
+        {
+            savePercent = progress.Percent;
+            Invalidate();
+        }
+
+        public void AdvanceSaveAnimation()
+        {
+            if (!isSaving || savePercent is not null)
+            {
+                return;
+            }
+
+            var railWidth = Math.Max(1, Width - 32);
+            var segmentWidth = Math.Max(48, railWidth / 4);
+            var maxOffset = Math.Max(0, railWidth - segmentWidth);
+            saveAnimationOffset += Math.Max(3, railWidth / 48);
+            if (saveAnimationOffset > maxOffset)
+            {
+                saveAnimationOffset = 0;
+            }
+
+            Invalidate();
+        }
+
         protected override void OnMouseEnter(EventArgs e)
         {
             hovered = true;
@@ -1717,7 +1790,7 @@ public sealed class MainForm : Form
 
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
+            if (!isSaving && e.Button == MouseButtons.Left)
             {
                 pressed = true;
                 Invalidate();
@@ -1737,22 +1810,25 @@ public sealed class MainForm : Form
         {
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
 
-            var start = isRecording ? palette.StopButtonStart : palette.Accent;
-            var end = isRecording ? palette.StopButtonEnd : palette.AccentEnd;
+            var saving = isSaving;
+            var start = saving ? palette.SaveButtonStart : isRecording ? palette.StopButtonStart : palette.Accent;
+            var end = saving ? palette.SaveButtonEnd : isRecording ? palette.StopButtonEnd : palette.AccentEnd;
 
-            if (hovered)
+            if (hovered && !saving)
             {
                 start = Lighten(start, 0.05F);
                 end = Lighten(end, 0.05F);
             }
 
-            if (pressed)
+            if (pressed && !saving)
             {
                 start = Darken(start, 0.07F);
                 end = Darken(end, 0.07F);
             }
 
-            if (!Enabled)
+            // Saving is a deliberate non-clickable state, not a disabled/blurred
+            // stop button: keep the warm orange identity and the readable label.
+            if (!Enabled && !saving)
             {
                 start = Blend(start, palette.DisabledBlend, 0.45F);
                 end = Blend(end, palette.DisabledBlend, 0.45F);
@@ -1763,6 +1839,12 @@ public sealed class MainForm : Form
             using var borderPen = new Pen(Color.FromArgb(40, 255, 255, 255));
             e.Graphics.FillPath(brush, path);
             e.Graphics.DrawPath(borderPen, path);
+
+            if (saving)
+            {
+                DrawSavingContent(e.Graphics);
+                return;
+            }
 
             var text = isRecording ? "Stop" : "Start Recording";
             var textSize = TextRenderer.MeasureText(text, Font);
@@ -1790,6 +1872,66 @@ public sealed class MainForm : Form
                 textRect,
                 Enabled ? ForeColor : Color.FromArgb(210, ForeColor),
                 TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        }
+
+        private void DrawSavingContent(Graphics graphics)
+        {
+            const string text = "Saving…";
+            var textColor = palette.SaveButtonText;
+            var textSize = TextRenderer.MeasureText(text, Font);
+            var textRect = new Rectangle((Width - textSize.Width) / 2, 0, textSize.Width + 2, Height - 2);
+            TextRenderer.DrawText(
+                graphics,
+                text,
+                Font,
+                textRect,
+                textColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+
+            if (savePercent is int percent)
+            {
+                var percentText = $"{percent} %";
+                var percentSize = TextRenderer.MeasureText(percentText, savePercentFont);
+                TextRenderer.DrawText(
+                    graphics,
+                    percentText,
+                    savePercentFont,
+                    new Rectangle(Width - percentSize.Width - 16, 0, percentSize.Width, Height - 2),
+                    Color.FromArgb(215, textColor),
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            }
+
+            var railX = 16;
+            var railY = Height - 7;
+            var railWidth = Math.Max(1, Width - 32);
+            var railRect = new Rectangle(railX, railY, railWidth, 3);
+            using var trackPath = CreateRoundedRectangle(railRect, 1.5F);
+            using var trackBrush = new SolidBrush(palette.SaveProgressTrack);
+            graphics.FillPath(trackBrush, trackPath);
+
+            Rectangle fillRect;
+            if (savePercent is int determinate)
+            {
+                var fillWidth = (int)Math.Round(railWidth * (determinate / 100D));
+                if (fillWidth <= 0)
+                {
+                    return;
+                }
+
+                fillRect = new Rectangle(railX, railY, Math.Min(fillWidth, railWidth), railRect.Height);
+            }
+            else
+            {
+                // Indeterminate: one moving segment driven by the existing uiTimer.
+                var segmentWidth = Math.Max(48, railWidth / 4);
+                var maxOffset = Math.Max(0, railWidth - segmentWidth);
+                var offset = maxOffset == 0 ? 0 : saveAnimationOffset % (maxOffset + 1);
+                fillRect = new Rectangle(railX + offset, railY, Math.Min(segmentWidth, railWidth - offset), railRect.Height);
+            }
+
+            using var fillPath = CreateRoundedRectangle(fillRect, 1.5F);
+            using var fillBrush = new SolidBrush(palette.SaveProgressFill);
+            graphics.FillPath(fillBrush, fillPath);
         }
 
         private static void DrawMicrophoneIcon(Graphics graphics, Rectangle bounds, Color color)
